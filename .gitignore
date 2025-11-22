@@ -1,0 +1,19 @@
+# Ignorar dispositivos generados
+generated_devices/
+devices/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Entornos virtuales
+venv/
+.env/
+
+# Archivos temporales
+*.tmp
+*.log
+*.swp
