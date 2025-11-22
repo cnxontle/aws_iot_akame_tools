@@ -17,3 +17,5 @@ __pycache__/
 *.tmp
 *.log
 *.swp
+
+gateways/
