@@ -100,6 +100,10 @@ def save_device_files(base_dir, device_name, data):
     with open(os.path.join(device_path, "metadata.json"), "w") as f:
         json.dump(data, f, indent=4)
 
+    #escribir el thingname en un archivo separado
+    with open(os.path.join(device_path, "thing_name.txt"), "w") as f:
+        f.write(device_name)
+
     print(f"Archivos creados en: {device_path}")
 
 
