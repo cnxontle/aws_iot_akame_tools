@@ -8,6 +8,7 @@ from tkinter import simpledialog, messagebox
 AWS_REGION = "us-east-2"
 SEARCH_NAME = "DeviceFactoryLambda"
 LAMBDA_NAME = None
+AWS_IOT_ENDPOINT = "afusoll07pjc2-ats.iot.us-east-2.amazonaws.com"
 
 # --- Búsqueda de la Función Lambda ---
 try:
@@ -79,7 +80,8 @@ def create_device(lambda_client, thing_name, user_id):
 
 
 # ---- Guardar archivos ----
-def save_device_files(base_dir, device_name, data):
+def save_device_files(base_dir, device_name, data, user_id):
+    
     """Guarda las credenciales y metadatos en un subdirectorio."""
     device_path = os.path.join(base_dir, device_name)
     os.makedirs(device_path, exist_ok=True)
@@ -100,10 +102,20 @@ def save_device_files(base_dir, device_name, data):
     with open(os.path.join(device_path, "metadata.json"), "w") as f:
         json.dump(data, f, indent=4)
 
-    #escribir el thingname en un archivo separado
-    with open(os.path.join(device_path, "thing_name.txt"), "w") as f:
-        f.write(device_name)
-
+    #escribir el metadato adicional del thingName y userId sin las claves
+    with open(os.path.join(device_path, "metadata.json"), "r+") as f:
+        metadata = json.load(f)
+        metadata["thingName"] = device_name
+        metadata["userId"] = user_id
+        metadata["awsIotEndpoint"] = AWS_IOT_ENDPOINT
+        metadata.pop("certificatePem", None)
+        metadata.pop("privateKey", None)
+        metadata.pop("publicKey", None)
+        metadata.pop("status", None)
+        f.seek(0)
+        json.dump(metadata, f, indent=4)
+        f.truncate()
+    
     print(f"Archivos creados en: {device_path}")
 
 
@@ -139,7 +151,7 @@ def main():
     result = create_device(lambda_client, thing_name, user_id)
 
     if result.get("status") == "ok":
-        save_device_files(output_dir, thing_name, result)
+        save_device_files(output_dir, thing_name, result, user_id)
         messagebox.showinfo(
             "Terminado",
             f"Gateway '{thing_name}' creado exitosamente.\n\nArchivos guardados en la carpeta '{output_dir}/{thing_name}'."

@@ -8,8 +8,7 @@ import paho.mqtt.client as mqtt
 # --- CONFIGURACIÓN DE RUTAS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
 AWS_IOT_ENDPOINT = "afusoll07pjc2-ats.iot.us-east-2.amazonaws.com"
-THING_NAME = "sensores_h" 
-CREDENTIALS_DIR = os.path.join(os.getcwd(), "gateways", THING_NAME)
+CREDENTIALS_DIR = os.path.join(os.getcwd(), "gateways/sensores_h")
 METADATA_PATH = os.path.join(CREDENTIALS_DIR, "metadata.json")
 
 # Definición de ruta absoluta para el CA Root
@@ -17,17 +16,18 @@ CA_ROOT_PATH = os.path.join(BASE_DIR, "AmazonRootCA1.pem")
 
 # --- Variables cargadas de la metadata ---
 try:
-    with open(METADATA_PATH, 'r') as f:
+    with open(METADATA_PATH, 'r') as f: 
         metadata = json.load(f)
         PUBLISH_TOPIC = metadata["gatewayTopic"]
-        USER_ID = PUBLISH_TOPIC.split("/")[1]  
+        USER_ID = metadata["userId"]
+        THING_NAME = metadata["thingName"]
          
     print(f" Configuración cargada: {THING_NAME}")
     print(f" Tópico PUBLISH: {PUBLISH_TOPIC}")
 
 except FileNotFoundError:
     print(f"Error: No se encontraron metadatos en {METADATA_PATH}")
-    print("Asegúrate de que la carpeta 'gateways/sensor-1' exista y contenga 'metadata.json'.")
+    print("Asegúrate de que la carpeta 'gateways/sensores_h' exista y contenga 'metadata.json'.")
     sys.exit(1)
 
 # Generar datos de humedad simulados
