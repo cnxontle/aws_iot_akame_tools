@@ -20,8 +20,8 @@ try:
     with open(METADATA_PATH, 'r') as f:
         metadata = json.load(f)
         PUBLISH_TOPIC = metadata["gatewayTopic"]
- 
-        
+        USER_ID = PUBLISH_TOPIC.split("/")[1]  
+         
     print(f" Configuración cargada: {THING_NAME}")
     print(f" Tópico PUBLISH: {PUBLISH_TOPIC}")
 
@@ -29,7 +29,6 @@ except FileNotFoundError:
     print(f"Error: No se encontraron metadatos en {METADATA_PATH}")
     print("Asegúrate de que la carpeta 'gateways/sensor-1' exista y contenga 'metadata.json'.")
     sys.exit(1)
-
 
 # Generar datos de humedad simulados
 def generate_simple_humidity_data(sensor_ids=["sensor-10", "sensor-11", "sensor-12", "sensor-13"]):
@@ -43,7 +42,7 @@ def generate_simple_humidity_data(sensor_ids=["sensor-10", "sensor-11", "sensor-
     # Estructura del payload consolidado
     data = {
         "gatewayId": THING_NAME,
-        "userId": "juan",
+        "userId": USER_ID,
         "timestamp": int(time.time()),
         "readings": readings
     }
