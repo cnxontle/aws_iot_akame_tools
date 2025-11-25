@@ -4,13 +4,12 @@ import boto3
 import tkinter as tk
 from tkinter import simpledialog, messagebox
 
-# --- CONFIGURACIÓN ---
 AWS_REGION = "us-east-2"
 SEARCH_NAME = "DeviceFactoryLambda"
 LAMBDA_NAME = None
 AWS_IOT_ENDPOINT = "afusoll07pjc2-ats.iot.us-east-2.amazonaws.com"
 
-# --- Búsqueda de la Función Lambda ---
+# Búsqueda de la Función Lambda
 try:
     lambda_client = boto3.client("lambda", region_name=AWS_REGION)
     paginator = lambda_client.get_paginator('list_functions')
@@ -26,42 +25,34 @@ except Exception as e:
     messagebox.showerror("Error de AWS", f"No se pudo conectar a AWS o listar funciones: {e}")
     LAMBDA_NAME = None
 
+# Asumimos que si el cliente falló, la ejecución ya se detuvo o se mostró el error.
 if not LAMBDA_NAME:
-    # Si LAMBDA_NAME sigue siendo None, lanza una excepción si no hay conexión
-    # Pero si el error es de conexión, el messagebox anterior ya lo manejó.
-    # Aquí asumimos que si el cliente falló, la ejecución ya se detuvo o se mostró el error.
     pass
 
 
-# --- Ventana de diálogo para entrada de datos ---
+# Ventana de diálogo para entrada de datos
 class GatewayDialog(simpledialog.Dialog):
     def body(self, master):
-        # Establece el tamaño de la ventana
         master.master.geometry("270x110") 
         
-        # Etiqueta para el nombre del dispositivo
         tk.Label(master, text="Nombre (ej: sensores_h):").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        # Etiqueta para el ID de usuario
         tk.Label(master, text="User ID (ej: usuario_A):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
 
-        # Campos de entrada
         self.thing_entry = tk.Entry(master)
         self.user_entry = tk.Entry(master)
 
         self.thing_entry.grid(row=0, column=1, padx=5, pady=5)
         self.user_entry.grid(row=1, column=1, padx=5, pady=5)
 
-        return self.thing_entry  # Enfocarse en el primer campo
+        return self.thing_entry 
 
     def apply(self):
-        # Guarda los valores de entrada
         self.thing_name = self.thing_entry.get().strip()
         self.user_id = self.user_entry.get().strip()
 
 
-# ---- Función para invocar la Lambda ----
+# Función para invocar la Lambda
 def create_device(lambda_client, thing_name, user_id):
-    """Invoca la función Lambda 'Fábrica de Dispositivos'."""
     if not LAMBDA_NAME:
          return {"status": "error", "message": "Función Lambda no encontrada o error de conexión."}
          
@@ -79,10 +70,9 @@ def create_device(lambda_client, thing_name, user_id):
     return json.loads(resp_payload)
 
 
-# ---- Guardar archivos ----
+# Guardar archivos
 def save_device_files(base_dir, device_name, data, user_id):
-    
-    """Guarda las credenciales y metadatos en un subdirectorio."""
+
     device_path = os.path.join(base_dir, device_name)
     os.makedirs(device_path, exist_ok=True)
 
@@ -108,7 +98,10 @@ def save_device_files(base_dir, device_name, data, user_id):
         metadata["thingName"] = device_name
         metadata["userId"] = user_id
         metadata["awsIotEndpoint"] = AWS_IOT_ENDPOINT
+        metadata["SSID"] = ""
+        metadata["WiFiPassword"] = ""
         metadata.pop("certificatePem", None)
+        metadata.pop("certificateArn", None)
         metadata.pop("privateKey", None)
         metadata.pop("publicKey", None)
         metadata.pop("status", None)
@@ -119,12 +112,11 @@ def save_device_files(base_dir, device_name, data, user_id):
     print(f"Archivos creados en: {device_path}")
 
 
-# ---- Main ----
+# Main
 def main():
     root = tk.Tk()
-    root.withdraw() # Oculta la ventana principal
+    root.withdraw() 
 
-    # Si la Lambda no se encontró al inicio, no tiene sentido continuar
     if not LAMBDA_NAME:
         messagebox.showerror("Error", "No se pudo encontrar la función Lambda 'DeviceFactoryLambda'. Verifique la región y el despliegue de CDK.")
         return
@@ -135,8 +127,7 @@ def main():
     user_id = dialog.user_id 
 
     if not thing_name or not user_id:
-        # Esto sucede si el usuario cancela o deja campos vacíos
-        if dialog.thing_name is not None: # Si no canceló explícitamente
+        if dialog.thing_name is not None: 
              messagebox.showerror("Error", "Tanto el Nombre del Gateway como el User ID son obligatorios.")
         return
 
@@ -154,7 +145,7 @@ def main():
         save_device_files(output_dir, thing_name, result, user_id)
         messagebox.showinfo(
             "Terminado",
-            f"Gateway '{thing_name}' creado exitosamente.\n\nArchivos guardados en la carpeta '{output_dir}/{thing_name}'."
+            f"Gateway '{thing_name}' creado exitosamente.\n\nArchivos guardados en la carpeta 'gateways/{thing_name}'."
         )
     else:
         messagebox.showerror(
@@ -163,6 +154,5 @@ def main():
         )
         print(f"Error creando Gateway {thing_name}: {result.get('message')}")
 
-    
 if __name__ == "__main__":
     main()
