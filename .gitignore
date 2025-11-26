@@ -1,7 +1,3 @@
-# Ignorar dispositivos generados
-generated_devices/
-devices/
-
 # Python
 __pycache__/
 *.pyc
@@ -19,4 +15,7 @@ __pycache__/
 *.swp
 
 gateways/
-AmazonRootCA1.pem
+sensor_humidity_aws_wifi/data/certificate.pem
+sensor_humidity_aws_wifi/data/private.key
+sensor_humidity_aws_wifi/data/public.txt
+sensor_humidity_aws_wifi/data/metadata.json
