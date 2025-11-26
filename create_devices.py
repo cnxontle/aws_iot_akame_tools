@@ -72,43 +72,36 @@ def create_device(lambda_client, thing_name, user_id):
 
 # Guardar archivos
 def save_device_files(base_dir, device_name, data, user_id):
-
+    
+    # Crear rutas necesarias
     device_path = os.path.join(base_dir, device_name)
+    esp32_path = os.path.join(base_dir, "sensor_humidity_aws_wifi/data")
+    paths = [device_path, esp32_path]
     os.makedirs(device_path, exist_ok=True)
 
-    # Escribir certificado
-    with open(os.path.join(device_path, "certificate.pem"), "w") as f:
-        f.write(data["certificatePem"])
+    # Crear metadata
+    metadata = {
+        "thingName": device_name,
+        "userId": user_id,
+        "awsIotEndpoint": AWS_IOT_ENDPOINT,
+        "SSID": "",
+        "WiFiPassword": ""
+    }
+    files = {
+        "certificatePem": "certificate.pem",
+        "privateKey": "private.key",
+        "publicKey":  "public.key"
+    }
 
-    # Escribir llave privada
-    with open(os.path.join(device_path, "private.key"), "w") as f:
-        f.write(data["privateKey"])
+    # Crear archivos en ambas rutas
+    for path in paths:
+        for key, filename in files.items():
+            with open(os.path.join(path, filename), "w") as f:
+                f.write(data[key])
 
-    # Escribir llave pública
-    with open(os.path.join(device_path, "public.key"), "w") as f:
-        f.write(data["publicKey"])
+        with open(os.path.join(path, "metadata.json"), "w") as f:
+            json.dump(metadata, f, indent=4)
 
-    # Escribir metadatos (incluye el tópico que debe usar el Gateway)
-    with open(os.path.join(device_path, "metadata.json"), "w") as f:
-        json.dump(data, f, indent=4)
-
-    #escribir el metadato adicional del thingName y userId sin las claves
-    with open(os.path.join(device_path, "metadata.json"), "r+") as f:
-        metadata = json.load(f)
-        metadata["thingName"] = device_name
-        metadata["userId"] = user_id
-        metadata["awsIotEndpoint"] = AWS_IOT_ENDPOINT
-        metadata["SSID"] = ""
-        metadata["WiFiPassword"] = ""
-        metadata.pop("certificatePem", None)
-        metadata.pop("certificateArn", None)
-        metadata.pop("privateKey", None)
-        metadata.pop("publicKey", None)
-        metadata.pop("status", None)
-        f.seek(0)
-        json.dump(metadata, f, indent=4)
-        f.truncate()
-    
     print(f"Archivos creados en: {device_path}")
 
 

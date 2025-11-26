@@ -17,5 +17,5 @@ __pycache__/
 gateways/
 sensor_humidity_aws_wifi/data/certificate.pem
 sensor_humidity_aws_wifi/data/private.key
-sensor_humidity_aws_wifi/data/public.txt
+sensor_humidity_aws_wifi/data/public.key
 sensor_humidity_aws_wifi/data/metadata.json
