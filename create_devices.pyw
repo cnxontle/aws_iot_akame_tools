@@ -83,6 +83,7 @@ def save_device_files(base_dir, device_name, data, user_id):
     metadata = {
         "thingName": device_name,
         "userId": user_id,
+        "gatewayTopic": "gateway/" + user_id + "/data/telemetry",
         "awsIotEndpoint": AWS_IOT_ENDPOINT,
         "SSID": "",
         "WiFiPassword": ""
