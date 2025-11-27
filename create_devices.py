@@ -74,8 +74,8 @@ def create_device(lambda_client, thing_name, user_id):
 def save_device_files(base_dir, device_name, data, user_id):
     
     # Crear rutas necesarias
-    device_path = os.path.join(base_dir, device_name)
-    esp32_path = os.path.join(base_dir, "sensor_humidity_aws_wifi/data")
+    device_path = os.path.join(base_dir, "gateways", device_name)
+    esp32_path = os.path.join(base_dir, "sensor_humidity_aws_wifi","data")
     paths = [device_path, esp32_path]
     os.makedirs(device_path, exist_ok=True)
 
@@ -125,7 +125,7 @@ def main():
         return
 
     # Carpeta fija dentro del proyecto
-    output_dir = os.path.join(os.getcwd(), "gateways")
+    output_dir = os.path.join(os.getcwd())
     os.makedirs(output_dir, exist_ok=True)
 
     lambda_client = boto3.client("lambda", region_name=AWS_REGION)
