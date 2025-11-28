@@ -75,7 +75,7 @@ def save_device_files(base_dir, device_name, data, user_id):
     
     # Crear rutas necesarias
     device_path = os.path.join(base_dir, "gateways", device_name)
-    esp32_path = os.path.join(base_dir, "sensor_humidity_aws_wifi","data")
+    esp32_path = os.path.join(base_dir, "sketches", "sensor_humidity_wifi","data")
     paths = [device_path, esp32_path]
     os.makedirs(device_path, exist_ok=True)
 

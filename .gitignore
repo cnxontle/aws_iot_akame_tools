@@ -15,7 +15,7 @@ __pycache__/
 *.swp
 
 gateways/
-sensor_humidity_aws_wifi/data/certificate.pem
-sensor_humidity_aws_wifi/data/private.key
-sensor_humidity_aws_wifi/data/public.key
-sensor_humidity_aws_wifi/data/metadata.json
+sketches/sensor_humidity_wifi/data/certificate.pem
+sketches/sensor_humidity_wifi/data/private.key
+sketches/sensor_humidity_wifi/data/public.key
+sketches/sensor_humidity_wifi/data/metadata.json
