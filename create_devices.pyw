@@ -46,7 +46,7 @@ class GatewayDialog(simpledialog.Dialog):
         self.user_entry = tk.Entry(master)
         self.thing_entry = tk.Entry(master)
         self.ssid_entry = tk.Entry(master)
-        self.wifi_password_entry = tk.Entry(master, show="*")
+        self.wifi_password_entry = tk.Entry(master)
 
         self.user_entry.grid(row=0, column=1, padx=5, pady=5)
         self.thing_entry.grid(row=1, column=1, padx=5, pady=5)
