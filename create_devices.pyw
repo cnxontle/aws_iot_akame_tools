@@ -43,8 +43,8 @@ class GatewayDialog(simpledialog.Dialog):
         tk.Label(master, text="SSID:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
         tk.Label(master, text="WiFi Password:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
 
-        self.thing_entry = tk.Entry(master)
         self.user_entry = tk.Entry(master)
+        self.thing_entry = tk.Entry(master)
         self.ssid_entry = tk.Entry(master)
         self.wifi_password_entry = tk.Entry(master, show="*")
 
@@ -53,7 +53,7 @@ class GatewayDialog(simpledialog.Dialog):
         self.ssid_entry.grid(row=2, column=1, padx=5, pady=5)
         self.wifi_password_entry.grid(row=3, column=1, padx=5, pady=5)
 
-        return self.thing_entry 
+        return self.user_entry 
 
     def apply(self):
         self.thing_name = self.thing_entry.get().strip()
@@ -128,8 +128,8 @@ def main():
 
     dialog = GatewayDialog(root, title="Crear Gateway IoT")
 
+    user_id = dialog.user_id
     thing_name = dialog.thing_name
-    user_id = dialog.user_id 
     ssid = dialog.ssid
     wifi_password = dialog.wifi_password
 
