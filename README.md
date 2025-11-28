@@ -1,5 +1,3 @@
-# 🛠️ AWS IoT Akame Tools
-
 Este repositorio contiene un conjunto de herramientas diseñadas para simplificar el uso del **stack de AWS IoT**.
 
 ## Flujo de trabajo general
