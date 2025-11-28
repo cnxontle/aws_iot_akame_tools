@@ -7,7 +7,13 @@ from tkinter import simpledialog, messagebox
 AWS_REGION = "us-east-2"
 SEARCH_NAME = "DeviceFactoryLambda"
 LAMBDA_NAME = None
-AWS_IOT_ENDPOINT = "afusoll07pjc2-ats.iot.us-east-2.amazonaws.com"
+def get_iot_endpoint(region="us-east-2"):
+    client = boto3.client("iot", region_name=region)
+    response = client.describe_endpoint(endpointType="iot:Data-ATS")
+    return response["endpointAddress"]
+
+# Obtener endpoint dinámicamente
+AWS_IOT_ENDPOINT = get_iot_endpoint(AWS_REGION)
 
 # Búsqueda de la Función Lambda
 try:
@@ -33,23 +39,31 @@ if not LAMBDA_NAME:
 # Ventana de diálogo para entrada de datos
 class GatewayDialog(simpledialog.Dialog):
     def body(self, master):
-        master.master.geometry("270x110") 
+        master.master.geometry("270x180") 
         
-        tk.Label(master, text="Nombre (ej: sensores_h):").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        tk.Label(master, text="User ID (ej: usuario_A):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(master, text="ID de Usuario:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(master, text="Localización:").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+
+        tk.Label(master, text="SSID:").grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(master, text="WiFi Password:").grid(row=3, column=0, sticky="e", padx=5, pady=5)
 
         self.thing_entry = tk.Entry(master)
         self.user_entry = tk.Entry(master)
+        self.ssid_entry = tk.Entry(master)
+        self.wifi_password_entry = tk.Entry(master, show="*")
 
-        self.thing_entry.grid(row=0, column=1, padx=5, pady=5)
-        self.user_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.user_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.thing_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.ssid_entry.grid(row=2, column=1, padx=5, pady=5)
+        self.wifi_password_entry.grid(row=3, column=1, padx=5, pady=5)
 
         return self.thing_entry 
 
     def apply(self):
         self.thing_name = self.thing_entry.get().strip()
         self.user_id = self.user_entry.get().strip()
-
+        self.ssid = self.ssid_entry.get().strip()
+        self.wifi_password = self.wifi_password_entry.get().strip()
 
 # Función para invocar la Lambda
 def create_device(lambda_client, thing_name, user_id):
@@ -71,13 +85,14 @@ def create_device(lambda_client, thing_name, user_id):
 
 
 # Guardar archivos
-def save_device_files(base_dir, device_name, data, user_id):
+def save_device_files(base_dir, device_name, data, user_id, ssid, wifi_password):
     
     # Crear rutas necesarias
     device_path = os.path.join(base_dir, "gateways", device_name)
     esp32_path = os.path.join(base_dir, "sketches", "sensor_humidity_wifi","data")
     paths = [device_path, esp32_path]
     os.makedirs(device_path, exist_ok=True)
+    os.makedirs(esp32_path, exist_ok=True)
 
     # Crear metadata
     metadata = {
@@ -85,8 +100,8 @@ def save_device_files(base_dir, device_name, data, user_id):
         "userId": user_id,
         "gatewayTopic": "gateway/" + user_id + "/data/telemetry",
         "awsIotEndpoint": AWS_IOT_ENDPOINT,
-        "SSID": "",
-        "WiFiPassword": ""
+        "SSID": ssid,
+        "WiFiPassword": wifi_password   
     }
     files = {
         "certificatePem": "certificate.pem",
@@ -119,6 +134,8 @@ def main():
 
     thing_name = dialog.thing_name
     user_id = dialog.user_id 
+    ssid = dialog.ssid
+    wifi_password = dialog.wifi_password
 
     if not thing_name or not user_id:
         if dialog.thing_name is not None: 
@@ -136,7 +153,7 @@ def main():
     result = create_device(lambda_client, thing_name, user_id)
 
     if result.get("status") == "ok":
-        save_device_files(output_dir, thing_name, result, user_id)
+        save_device_files(output_dir, thing_name, result, user_id, ssid, wifi_password)
         messagebox.showinfo(
             "Terminado",
             f"Gateway '{thing_name}' creado exitosamente.\n\nArchivos guardados en la carpeta 'gateways/{thing_name}'."
