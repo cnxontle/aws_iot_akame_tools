@@ -7,13 +7,9 @@ from tkinter import simpledialog, messagebox
 AWS_REGION = "us-east-2"
 SEARCH_NAME = "DeviceFactoryLambda"
 LAMBDA_NAME = None
-def get_iot_endpoint(region="us-east-2"):
-    client = boto3.client("iot", region_name=region)
-    response = client.describe_endpoint(endpointType="iot:Data-ATS")
-    return response["endpointAddress"]
-
-# Obtener endpoint dinámicamente
-AWS_IOT_ENDPOINT = get_iot_endpoint(AWS_REGION)
+client = boto3.client("iot", region_name="us-east-2")
+response = client.describe_endpoint(endpointType="iot:Data-ATS")
+AWS_IOT_ENDPOINT = response["endpointAddress"]
 
 # Búsqueda de la Función Lambda
 try:
