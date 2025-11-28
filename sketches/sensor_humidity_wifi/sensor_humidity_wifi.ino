@@ -92,10 +92,10 @@ void setup() {
   }
 
   // ===== Leer archivos =====
-  caCert     = leerArchivo("/AmazonRootCA1.pem");
+  caCert = leerArchivo("/AmazonRootCA1.pem");
   deviceCert = leerArchivo("/certificate.pem");
   privateKey = leerArchivo("/private.key");
-  publicKey  = leerArchivo("/public.key");
+  publicKey = leerArchivo("/public.key");
 
   String metadata = leerArchivo("/metadata.json");
 
@@ -103,20 +103,20 @@ void setup() {
   StaticJsonDocument<512> meta;
   deserializeJson(meta, metadata);
 
-  thingName     = meta["thingName"].as<String>();
+  thingName = meta["thingName"].as<String>();
   awsIotEndpoint = meta["awsIotEndpoint"].as<String>();
-  gatewayTopic  = meta["gatewayTopic"].as<String>();
-  userId        = meta["userId"].as<String>();
-  SSID          = meta["SSID"].as<String>();
-  WiFiPassword  = meta["WiFiPassword"].as<String>();
+  gatewayTopic = meta["gatewayTopic"].as<String>();
+  userId = meta["userId"].as<String>();
+  SSID = meta["SSID"].as<String>();
+  WiFiPassword = meta["WiFiPassword"].as<String>();
 
   Serial.println("\n=== METADATA CARGADA ===");
   Serial.println("thingName: " + thingName);
   Serial.println("endpoint:  " + awsIotEndpoint);
   Serial.println("topic:     " + gatewayTopic);
   Serial.println("userId:    " + userId);
-  Serial.println("SSID:    " + userId);
-  Serial.println("WiFiPassword:    " + userId);
+  Serial.println("SSID:    " + SSID);
+  Serial.println("WiFiPassword:    " + WiFiPassword);
   Serial.println("=========================\n");
 
   // ===== Conexión WiFi =====
@@ -142,35 +142,35 @@ void setup() {
 }
 
 void loop() {
-// --- Reconexion WiFi ---
-    if (WiFi.status() != WL_CONNECTED) {
+  // --- Reconexion WiFi ---
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println(" WiFi desconectado, intentando reconectar...");
     WiFi.reconnect();
     unsigned long t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 5000) {
-        delay(250);
-        Serial.print(".");
+      delay(250);
+      Serial.print(".");
     }
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("WiFi reconectado");
+      Serial.println("WiFi reconectado");
     } else {
-        Serial.println("No se pudo reconectar WiFi");
+      Serial.println("No se pudo reconectar WiFi");
     }
-    }
+  }
   if (!mqttClient.connected()) {
     conectarMQTT();
   }
   mqttClient.loop();
   static unsigned long lastSend = 0;
   if (millis() - lastSend > 10000) {
-    
 
-    const int rawSeco = 2259;     
+
+    const int rawSeco = 2259;
     const int rawMojado = 939;
-    int raw = analogRead(34);  
+    int raw = analogRead(34);
 
-    // Convertir a % humedad 
+    // Convertir a % humedad
     float humidity = (rawSeco - raw) * 100.0 / (rawSeco - rawMojado);
     if (humidity < 0) humidity = 0;
     if (humidity > 100) humidity = 100;
@@ -193,4 +193,3 @@ void loop() {
     lastSend = millis();
   }
 }
-
