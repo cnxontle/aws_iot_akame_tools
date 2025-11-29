@@ -8,325 +8,315 @@
 #include <esp_wifi.h>
 #include <time.h>
 
-// Configuración
-const int id_esp32 = 1;    
+// Configuration
+const int nodeId = 1;
 String thingName;
 String awsIotEndpoint;
 String gatewayTopic;
 String userId;
-String SSID;
-String WiFiPassword;
+String ssid;
+String wifiPassword;
 String caCert, deviceCert, privateKey;
-bool broadcastPeerAdded = false;
+
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// Estructura para lecturas recibidas
+// Reading structure
 struct Reading {
-  int id_esp32;
+  int nodeId;
   float humidity;
   int raw;
 };
 std::vector<Reading> readings;
 
-// Prototipos
-String leerArchivo(const char* ruta);
-void agregarLectura(int id, float hum, int raw);
-void limpiarBuffer();
-void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len);
-void publicarMQTT();
-void enviarLecturaPropia();
-void conectarWiFi(unsigned long timeoutMs = 10000);
+// Prototypes
+String readFile(const char* path);
+void addReading(int id, float hum, int raw);
+void clearBuffer();
+void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len);
+void publishMQTT();
+void sendOwnReading();
 bool syncTime(unsigned long timeoutMs = 10000);
-void conectarMQTT();
+void connectMQTT();
 
-// Manejo del sistema de archivos LittleFS
-String leerArchivo(const char* ruta) {
-  File f = LittleFS.open(ruta, "r");
+// File system handler
+String readFile(const char* path) {
+  File f = LittleFS.open(path, "r");
   if (!f) {
-    Serial.printf("Error abriendo %s\n", ruta);
+    Serial.printf("Error opening %s\n", path);
     return "";
   }
-  String contenido = f.readString();
+  String content = f.readString();
   f.close();
-  Serial.printf("Archivo %s leído correctamente (%u bytes)\n", ruta, (unsigned)contenido.length());
-  return contenido;
+  Serial.printf("File %s read OK (%u bytes)\n", path, (unsigned)content.length());
+  return content;
 }
 
-// Manejo del buffer
-void agregarLectura(int id, float hum, int raw) {
-  // Si ya existe → actualizar
+// Buffer manager
+void addReading(int id, float hum, int raw) {
   for (Reading &r : readings) {
-    if (r.id_esp32 == id) {
+    if (r.nodeId == id) {
       r.humidity = hum;
       r.raw = raw;
-      Serial.printf("Actualizado id=%d hum=%.2f raw=%d\n", id, hum, raw);
+      Serial.printf("Updated nodeId=%d hum=%.2f raw=%d\n", id, hum, raw);
       return;
     }
   }
-  // Si no existe → agregar
   Reading r;
-  r.id_esp32 = id;
+  r.nodeId = id;
   r.humidity = hum;
   r.raw = raw;
   readings.push_back(r);
-  Serial.printf("Nueva lectura id=%d hum=%.2f raw=%d\n", id, hum, raw);
+  Serial.printf("New reading nodeId=%d hum=%.2f raw=%d\n", id, hum, raw);
 }
 
-void limpiarBuffer() {
+void clearBuffer() {
   readings.clear();
 }
 
-// Recepción de datos ESP-NOW
-void onDataRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
-  // opcional: imprimir MAC remitente
-  if (info != nullptr) {
-    char macStr[18];
-    sprintf(macStr, "%02X:%02X:%02X:%02X:%02X:%02X",
-            info->src_addr[0], info->src_addr[1], info->src_addr[2],
-            info->src_addr[3], info->src_addr[4], info->src_addr[5]);
-    Serial.print("ESP-NOW desde: ");
-    Serial.println(macStr);
-  }
+// ESP-NOW receive
+void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
 
   StaticJsonDocument<256> msg;
   DeserializationError err = deserializeJson(msg, data, len);
   if (err) {
-    Serial.println("Paquete ignorado (no es JSON válido)");
+    Serial.println("Ignored packet (invalid JSON)");
     return;
   }
 
-  // validar encabezados mínimos
   if (!msg.containsKey("userId") ||
-      !msg.containsKey("thingName") ||
-      !msg.containsKey("id_esp32") ||
+      !msg.containsKey("locationId") ||
+      !msg.containsKey("nodeId") ||
       !msg.containsKey("humidity") ||
       !msg.containsKey("raw")) {
 
-    Serial.println("Paquete ignorado (JSON incompleto)");
+    Serial.println("Ignored packet (incomplete JSON)");
     return;
   }
 
   if (String(msg["userId"]) != userId ||
-      String(msg["thingName"]) != thingName) {
+      String(msg["locationId"]) != thingName) {
 
-    Serial.println("Paquete ignorado (no pertenece a este sistema)");
+    Serial.println("Ignored packet (belongs to different system)");
     return;
   }
 
-  int id   = msg["id_esp32"];
+  int id = msg["nodeId"];
   float hum = msg["humidity"];
-  int raw  = msg["raw"];
+  int raw = msg["raw"];
 
-  agregarLectura(id, hum, raw);
+  addReading(id, hum, raw);
 }
 
-// Publicar datos vía MQTT
-void publicarMQTT() {
+// Publish via AWS IoT MQTT
+void publishMQTT() {
   if (!mqttClient.connected()) {
-    Serial.println("Cliente MQTT no conectado, no se publica.");
+    Serial.println("MQTT client not connected — skipping publish.");
     return;
   }
-  // Crear JSON
+
   StaticJsonDocument<512> doc;
   doc["userId"] = userId;
-  doc["locId"] = thingName;   
+  doc["locationId"] = thingName;
   doc["timestamp"] = time(nullptr);
+
   JsonArray arr = doc.createNestedArray("readings");
   for (Reading &r : readings) {
     JsonObject o = arr.createNestedObject();
-    o["id"] = r.id_esp32;
+    o["nodeId"] = r.nodeId;
     o["humidity"] = r.humidity;
     o["raw"] = r.raw;
   }
-  // serializar
+
   size_t len = measureJson(doc) + 1;
   char *buffer = (char*)malloc(len);
   serializeJson(doc, buffer, len);
-  // publicar
-  Serial.print("Publicando: ");
+
+  Serial.print("Publishing: ");
   Serial.println(buffer);
+
   if (!mqttClient.publish(gatewayTopic.c_str(), buffer)) {
-    Serial.println("Error publicando");
+    Serial.println("MQTT publish ERROR");
   } else {
-    Serial.println("Publicación exitosa");
-    limpiarBuffer();  
+    Serial.println("MQTT publish OK");
+    clearBuffer();
   }
+
   free(buffer);
 }
 
-
-// Generar y enviar lectura propia vía ESP-NOW
-void enviarLecturaPropia() {
-  const int rawSeco = 2259;
-  const int rawMojado = 939;
+// Send coordinator reading via ESP-NOW
+void sendOwnReading() {
+  const int rawDry = 2259;
+  const int rawWet = 939;
   int raw = analogRead(34);
-  float hum = (rawSeco - raw) * 100.0 / (rawSeco - rawMojado);
+  float hum = (rawDry - raw) * 100.0 / (rawDry - rawWet);
   hum = constrain(hum, 0, 100);
 
-  // crear JSON para broadcast
   StaticJsonDocument<128> doc;
   doc["userId"] = userId;
-  doc["locId"] = thingName;
-  doc["id_esp32"] = id_esp32;
+  doc["locationId"] = thingName;
+  doc["nodeId"] = nodeId;
   doc["humidity"] = hum;
   doc["raw"] = raw;
 
-  // serializar
   char buffer[128];
   size_t len = serializeJson(doc, buffer);
 
-  // enviar en broadcast (añadimos peer broadcast UNA VEZ en setup)
   uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
   esp_err_t res = esp_now_send(bcast, (uint8_t*)buffer, len);
+
   if (res == ESP_OK) {
-    Serial.printf("Emitida lectura propia id=%d hum=%.2f raw=%d (esp-now)\n", id_esp32, hum, raw);
+    Serial.printf("Broadcast own reading nodeId=%d hum=%.2f raw=%d\n", nodeId, hum, raw);
   } else {
-    Serial.printf("Error esp_now_send: %d\n", res);
+    Serial.printf("esp_now_send ERROR: %d\n", res);
   }
 
-  // también la añadimos al buffer local (reemplaza si existe)
-  agregarLectura(id_esp32, hum, raw);
+  addReading(nodeId, hum, raw);
 }
 
-// ---------------- utilidades WiFi / NTP / MQTT ----------------
-
-
+// Time sync
 bool syncTime(unsigned long timeoutMs) {
-  Serial.println("Sincronizando hora NTP...");
+  Serial.println("Syncing time via NTP...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
   unsigned long start = millis();
   time_t nowSec;
+
   do {
     nowSec = time(nullptr);
     if ((millis() - start) > timeoutMs) {
-      Serial.println("Timeout NTP");
+      Serial.println("NTP timeout");
       return false;
     }
     delay(200);
   } while (nowSec < 1600000000);
-  Serial.println("Hora sincronizada");
+
+  Serial.println("Time synced");
   return true;
 }
 
-void conectarMQTT() {
+// MQTT connect
+void connectMQTT() {
   if (mqttClient.connected()) return;
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("No conectado a WiFi; intentar conectar WiFi antes de MQTT");
+    Serial.println("WiFi not connected — skipping MQTT connect");
     return;
   }
 
-  // configurar servidor MQTT
   wifiClient.setCACert(caCert.c_str());
   if (deviceCert.length()) wifiClient.setCertificate(deviceCert.c_str());
   if (privateKey.length()) wifiClient.setPrivateKey(privateKey.c_str());
   mqttClient.setServer(awsIotEndpoint.c_str(), 8883);
-  Serial.println("Conectando a MQTT (AWS IoT)...");
 
-  // conectar
+  Serial.println("Connecting to AWS IoT MQTT...");
+
   if (mqttClient.connect(thingName.c_str())) {
-    Serial.println("MQTT conectado");
+    Serial.println("MQTT connected");
   } else {
-    Serial.printf("Error MQTT connect: %d\n", mqttClient.state());
+    Serial.printf("MQTT connect error: %d\n", mqttClient.state());
   }
 }
 
-// SETUP principal
+// SETUP
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // iniciar LittleFS
   if (!LittleFS.begin()) {
-    Serial.println("Error montando LittleFS");
+    Serial.println("LittleFS mount ERROR");
     return;
   }
 
-  // leer certificados y metadata
-  caCert = leerArchivo("/AmazonRootCA1.pem");
-  deviceCert = leerArchivo("/certificate.pem");
-  privateKey = leerArchivo("/private.key");
-  String metadata = leerArchivo("/metadata.json");
+  caCert = readFile("/AmazonRootCA1.pem");
+  deviceCert = readFile("/certificate.pem");
+  privateKey = readFile("/private.key");
+
+  String metadata = readFile("/metadata.json");
   if (metadata.length()) {
     StaticJsonDocument<512> meta;
-    DeserializationError merr = deserializeJson(meta, metadata);
-    if (!merr) {
+    if (!deserializeJson(meta, metadata)) {
       thingName = meta["thingName"].as<String>();
       awsIotEndpoint = meta["awsIotEndpoint"].as<String>();
       gatewayTopic = meta["gatewayTopic"].as<String>();
       userId = meta["userId"].as<String>();
-      SSID = meta["SSID"].as<String>();
-      WiFiPassword = meta["WiFiPassword"].as<String>();
+      ssid = meta["SSID"].as<String>();
+      wifiPassword = meta["WiFiPassword"].as<String>();
     } else {
-      Serial.println("metadata.json inválido");
+      Serial.println("metadata.json invalid");
     }
   } else {
-    Serial.println("metadata.json no encontrado o vacío");
+    Serial.println("metadata.json missing or empty");
   }
+
   Serial.println("=== CONFIG ===");
   Serial.println("thingName: " + thingName);
-  Serial.println("awsEndpoint: " + awsIotEndpoint);
+  Serial.println("awsIotEndpoint: " + awsIotEndpoint);
   Serial.println("gatewayTopic: " + gatewayTopic);
   Serial.println("userId: " + userId);
-  Serial.println("SSID: " + SSID);
+  Serial.println("SSID: " + ssid);
   Serial.println("================");
 
-// iniciar ESP-NOW y WiFi
+  // ESP-NOW + WiFi
   WiFi.mode(WIFI_STA);
+
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Error iniciando ESP-NOW");
+    Serial.println("ESP-NOW init ERROR");
   } else {
-    Serial.println("ESP-NOW iniciado");
+    Serial.println("ESP-NOW ready");
   }
-  esp_now_register_recv_cb(onDataRecv);
-  WiFi.begin(SSID.c_str(), WiFiPassword.c_str());
-  Serial.println("Conectando WiFi...");
+
+  esp_now_register_recv_cb(onEspNowRecv);
+
+  WiFi.begin(ssid.c_str(), wifiPassword.c_str());
+  Serial.println("Connecting WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
     delay(200);
     Serial.print(".");
   }
-  Serial.println("\nWiFi conectado");
+  Serial.println("\nWiFi connected");
+
   wifi_ap_record_t apInfo;
   esp_wifi_sta_get_ap_info(&apInfo);
-  uint8_t wifi_channel = apInfo.primary;
-  Serial.print("Canal WiFi = ");
-  Serial.println(wifi_channel);
-  esp_wifi_set_channel(wifi_channel, WIFI_SECOND_CHAN_NONE);
+  uint8_t wifiChannel = apInfo.primary;
 
-  // Peer broadcast
+  Serial.print("WiFi channel = ");
+  Serial.println(wifiChannel);
+
+  esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
+
+  // Broadcast peer
   esp_now_peer_info_t peerInfo;
   memset(&peerInfo, 0, sizeof(peerInfo));
   memset(peerInfo.peer_addr, 0xFF, 6);
-  peerInfo.channel = wifi_channel;
+  peerInfo.channel = wifiChannel;
   peerInfo.encrypt = false;
   esp_now_add_peer(&peerInfo);
 
-  // conectar MQTT
+  // MQTT
   syncTime(8000);
-  conectarMQTT();
-  Serial.println("Setup completado.");
+  connectMQTT();
+
+  Serial.println("Setup done.");
 }
 
-// LOOP principal
+// LOOP
 void loop() {
   static unsigned long lastLocalSend = 0;
   static unsigned long lastMQTTSend = 0;
 
-  // mantener MQTT
   if (!mqttClient.connected()) {
-    conectarMQTT();
+    connectMQTT();
   }
   mqttClient.loop();
 
-  // El coordinador envía su propia lectura cada 10s
   if (millis() - lastLocalSend > 10000) {
-    enviarLecturaPropia();
+    sendOwnReading();
     lastLocalSend = millis();
   }
 
-  // Publicar lecturas acumuladas cada 60s
   if (millis() - lastMQTTSend > 60000) {
-    publicarMQTT();
+    publishMQTT();
     lastMQTTSend = millis();
   }
 }
