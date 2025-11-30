@@ -8,20 +8,20 @@
 #include <esp_wifi.h>
 #include <time.h>
 
-// Configuration
-const int nodeId = 1;
-String thingName;
-String awsIotEndpoint;
-String gatewayTopic;
-String userId;
-String ssid;
-String wifiPassword;
+// ===== CONFIG =====
+const int nodeId = 1; // Coordinador
+const int numNodes = 100;
+const unsigned long slotDurationMs = 1000; // 1 segundo por slot
+const unsigned long windowDurationMs = slotDurationMs * numNodes; // Ventana completa
+const int timestampRetries = 5; // Intentos de broadcast de timestamp
+
+String thingName, awsIotEndpoint, gatewayTopic, userId, ssid, wifiPassword;
 String caCert, deviceCert, privateKey;
 
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// Reading structure
+// ===== STRUCTS =====
 struct Reading {
   int nodeId;
   float humidity;
@@ -29,30 +29,28 @@ struct Reading {
 };
 std::vector<Reading> readings;
 
-// Prototypes
+// ===== PROTOTYPES =====
 String readFile(const char* path);
 void addReading(int id, float hum, int raw);
 void clearBuffer();
 void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len);
 void publishMQTT();
-void sendOwnReading();
+void storeOwnReading();
+void broadcastTimestamp();
 bool syncTime(unsigned long timeoutMs = 10000);
 void connectMQTT();
 
-// File system handler
+// ===== FILE SYSTEM =====
 String readFile(const char* path) {
   File f = LittleFS.open(path, "r");
-  if (!f) {
-    Serial.printf("Error opening %s\n", path);
-    return "";
-  }
+  if (!f) { Serial.printf("Error opening %s\n", path); return ""; }
   String content = f.readString();
   f.close();
   Serial.printf("File %s read OK (%u bytes)\n", path, (unsigned)content.length());
   return content;
 }
 
-// Buffer manager
+// ===== BUFFER MANAGER =====
 void addReading(int id, float hum, int raw) {
   for (Reading &r : readings) {
     if (r.nodeId == id) {
@@ -70,33 +68,21 @@ void addReading(int id, float hum, int raw) {
   Serial.printf("New reading nodeId=%d hum=%.2f raw=%d\n", id, hum, raw);
 }
 
-void clearBuffer() {
-  readings.clear();
-}
+void clearBuffer() { readings.clear(); }
 
-// ESP-NOW receive
+// ===== ESP-NOW RECEIVE =====
 void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
-
   StaticJsonDocument<256> msg;
-  DeserializationError err = deserializeJson(msg, data, len);
-  if (err) {
-    Serial.println("Ignored packet (invalid JSON)");
-    return;
-  }
+  if (deserializeJson(msg, data, len)) { Serial.println("Ignored packet (invalid JSON)"); return; }
 
-  if (!msg.containsKey("userId") ||
-      !msg.containsKey("locationId") ||
-      !msg.containsKey("nodeId") ||
-      !msg.containsKey("humidity") ||
+  if (!msg.containsKey("userId") || !msg.containsKey("locationId") ||
+      !msg.containsKey("nodeId") || !msg.containsKey("humidity") ||
       !msg.containsKey("raw")) {
-
     Serial.println("Ignored packet (incomplete JSON)");
     return;
   }
 
-  if (String(msg["userId"]) != userId ||
-      String(msg["locationId"]) != thingName) {
-
+  if (String(msg["userId"]) != userId || String(msg["locationId"]) != thingName) {
     Serial.println("Ignored packet (belongs to different system)");
     return;
   }
@@ -104,16 +90,12 @@ void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
   int id = msg["nodeId"];
   float hum = msg["humidity"];
   int raw = msg["raw"];
-
   addReading(id, hum, raw);
 }
 
-// Publish via AWS IoT MQTT
+// ===== PUBLISH MQTT =====
 void publishMQTT() {
-  if (!mqttClient.connected()) {
-    Serial.println("MQTT client not connected — skipping publish.");
-    return;
-  }
+  if (!mqttClient.connected()) { Serial.println("MQTT client not connected — skipping publish."); return; }
 
   StaticJsonDocument<512> doc;
   doc["userId"] = userId;
@@ -132,77 +114,58 @@ void publishMQTT() {
   char *buffer = (char*)malloc(len);
   serializeJson(doc, buffer, len);
 
-  Serial.print("Publishing: ");
-  Serial.println(buffer);
-
-  if (!mqttClient.publish(gatewayTopic.c_str(), buffer)) {
-    Serial.println("MQTT publish ERROR");
-  } else {
-    Serial.println("MQTT publish OK");
-    clearBuffer();
-  }
+  Serial.print("Publishing: "); Serial.println(buffer);
+  if (!mqttClient.publish(gatewayTopic.c_str(), buffer)) Serial.println("MQTT publish ERROR");
+  else clearBuffer();
 
   free(buffer);
 }
 
-// Send coordinator reading via ESP-NOW
-void sendOwnReading() {
+// ===== STORE COORDINATOR READING =====
+void storeOwnReading() {
   const int rawDry = 2259;
   const int rawWet = 939;
   int raw = analogRead(34);
   float hum = (rawDry - raw) * 100.0 / (rawDry - rawWet);
   hum = constrain(hum, 0, 100);
 
-  StaticJsonDocument<128> doc;
-  doc["userId"] = userId;
-  doc["locationId"] = thingName;
-  doc["nodeId"] = nodeId;
-  doc["humidity"] = hum;
-  doc["raw"] = raw;
-
-  char buffer[128];
-  size_t len = serializeJson(doc, buffer);
-
-  uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-  esp_err_t res = esp_now_send(bcast, (uint8_t*)buffer, len);
-
-  if (res == ESP_OK) {
-    Serial.printf("Broadcast own reading nodeId=%d hum=%.2f raw=%d\n", nodeId, hum, raw);
-  } else {
-    Serial.printf("esp_now_send ERROR: %d\n", res);
-  }
-
-  addReading(nodeId, hum, raw);
+  addReading(nodeId, hum, raw); // Solo almacena en buffer
 }
 
-// Time sync
+// ===== BROADCAST TIMESTAMP =====
+void broadcastTimestamp() {
+  StaticJsonDocument<64> msg;
+  msg["timestamp"] = time(nullptr);
+  char buffer[64];
+  size_t len = serializeJson(msg, buffer);
+
+  uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+  for (int i = 0; i < timestampRetries; i++) {
+    esp_err_t res = esp_now_send(bcast, (uint8_t*)buffer, len);
+    if (res == ESP_OK) Serial.printf("Broadcast timestamp %u (try %d)\n", time(nullptr), i+1);
+    delay(1000); // 1 segundo entre intentos
+  }
+}
+
+// ===== TIME SYNC =====
 bool syncTime(unsigned long timeoutMs) {
   Serial.println("Syncing time via NTP...");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-
   unsigned long start = millis();
   time_t nowSec;
-
   do {
     nowSec = time(nullptr);
-    if ((millis() - start) > timeoutMs) {
-      Serial.println("NTP timeout");
-      return false;
-    }
+    if ((millis() - start) > timeoutMs) { Serial.println("NTP timeout"); return false; }
     delay(200);
   } while (nowSec < 1600000000);
-
   Serial.println("Time synced");
   return true;
 }
 
-// MQTT connect
+// ===== MQTT CONNECT =====
 void connectMQTT() {
   if (mqttClient.connected()) return;
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected — skipping MQTT connect");
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) { Serial.println("WiFi not connected — skipping MQTT connect"); return; }
 
   wifiClient.setCACert(caCert.c_str());
   if (deviceCert.length()) wifiClient.setCertificate(deviceCert.c_str());
@@ -210,23 +173,16 @@ void connectMQTT() {
   mqttClient.setServer(awsIotEndpoint.c_str(), 8883);
 
   Serial.println("Connecting to AWS IoT MQTT...");
-
-  if (mqttClient.connect(thingName.c_str())) {
-    Serial.println("MQTT connected");
-  } else {
-    Serial.printf("MQTT connect error: %d\n", mqttClient.state());
-  }
+  if (mqttClient.connect(thingName.c_str())) Serial.println("MQTT connected");
+  else Serial.printf("MQTT connect error: %d\n", mqttClient.state());
 }
 
-// SETUP
+// ===== SETUP =====
 void setup() {
   Serial.begin(115200);
   delay(200);
 
-  if (!LittleFS.begin()) {
-    Serial.println("LittleFS mount ERROR");
-    return;
-  }
+  if (!LittleFS.begin()) { Serial.println("LittleFS mount ERROR"); return; }
 
   caCert = readFile("/AmazonRootCA1.pem");
   deviceCert = readFile("/certificate.pem");
@@ -242,47 +198,31 @@ void setup() {
       userId = meta["userId"].as<String>();
       ssid = meta["SSID"].as<String>();
       wifiPassword = meta["WiFiPassword"].as<String>();
-    } else {
-      Serial.println("metadata.json invalid");
-    }
-  } else {
-    Serial.println("metadata.json missing or empty");
-  }
+    } else Serial.println("metadata.json invalid");
+  } else Serial.println("metadata.json missing or empty");
 
   Serial.println("=== CONFIG ===");
   Serial.println("thingName: " + thingName);
   Serial.println("awsIotEndpoint: " + awsIotEndpoint);
   Serial.println("gatewayTopic: " + gatewayTopic);
   Serial.println("userId: " + userId);
-  Serial.println("SSID: " + ssid);
   Serial.println("================");
 
-  // ESP-NOW + WiFi
   WiFi.mode(WIFI_STA);
-
-  if (esp_now_init() != ESP_OK) {
-    Serial.println("ESP-NOW init ERROR");
-  } else {
-    Serial.println("ESP-NOW ready");
-  }
+  if (esp_now_init() != ESP_OK) Serial.println("ESP-NOW init ERROR");
+  else Serial.println("ESP-NOW ready");
 
   esp_now_register_recv_cb(onEspNowRecv);
 
   WiFi.begin(ssid.c_str(), wifiPassword.c_str());
   Serial.println("Connecting WiFi...");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(200);
-    Serial.print(".");
-  }
+  while (WiFi.status() != WL_CONNECTED) { delay(200); Serial.print("."); }
   Serial.println("\nWiFi connected");
 
   wifi_ap_record_t apInfo;
   esp_wifi_sta_get_ap_info(&apInfo);
   uint8_t wifiChannel = apInfo.primary;
-
-  Serial.print("WiFi channel = ");
-  Serial.println(wifiChannel);
-
+  Serial.print("WiFi channel = "); Serial.println(wifiChannel);
   esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
 
   // Broadcast peer
@@ -293,30 +233,73 @@ void setup() {
   peerInfo.encrypt = false;
   esp_now_add_peer(&peerInfo);
 
-  // MQTT
   syncTime(8000);
   connectMQTT();
 
   Serial.println("Setup done.");
 }
 
-// LOOP
+// ===== LOOP =====
 void loop() {
-  static unsigned long lastLocalSend = 0;
-  static unsigned long lastMQTTSend = 0;
+  static time_t nextWindowStartEpoch = 0; // Almacena el tiempo epoch del próximo inicio
 
-  if (!mqttClient.connected()) {
-    connectMQTT();
-  }
+  // Mantiene la conexión MQTT
+  if (!mqttClient.connected()) connectMQTT();
   mqttClient.loop();
 
-  if (millis() - lastLocalSend > 10000) {
-    sendOwnReading();
-    lastLocalSend = millis();
+  // 1. Obtener la hora actual
+  time_t nowEpoch = time(nullptr);
+
+  // 2. Calcular el próximo inicio si no se ha establecido (solo en el primer ciclo)
+  if (nextWindowStartEpoch == 0) {
+    if (nowEpoch < 1600000000) { 
+      delay(1000);
+      return;
+    }
+    
+    // Calcula el tiempo en segundos desde el inicio del día (00:00:00)
+    struct tm *lt = localtime(&nowEpoch);
+    long secsSinceMidnight = lt->tm_sec + lt->tm_min * 60 + lt->tm_hour * 3600;
+    
+    // Calcula cuántos segundos faltan para el próximo múltiplo de 30 minutos (1800 segundos)
+    const long halfHourSecs = 1800; 
+    long secsUntilNextHalfHour = halfHourSecs - (secsSinceMidnight % halfHourSecs);
+
+    // Suma el tiempo restante a la hora actual
+    nextWindowStartEpoch = nowEpoch + secsUntilNextHalfHour;
+    
+    Serial.printf("Primer ciclo. Siguiente inicio de ventana: %s", asctime(localtime(&nextWindowStartEpoch)));
   }
 
-  if (millis() - lastMQTTSend > 60000) {
-    publishMQTT();
-    lastMQTTSend = millis();
+  // 3. Condición de inicio de ventana
+  if (nowEpoch >= nextWindowStartEpoch) {
+    Serial.printf("\n--- INICIO DE VENTANA (%s) ---\n", asctime(localtime(&nowEpoch)));
+
+    // Acciones de inicio de ventana
+    broadcastTimestamp();   // 5 intentos de broadcast del timestamp
+    storeOwnReading();      // Almacena lectura coordinador
+    
+    
+    Serial.println("Recibiendo lecturas de nodos...");
+    unsigned long windowStart = millis();
+    while (millis() - windowStart < windowDurationMs) {
+        mqttClient.loop();          // Mantener MQTT activo
+        delay(50);                  // Pequeño retardo para ESP-NOW y yield
+    }
+    publishMQTT();          // Publica todas las lecturas y limpia el buffer
+    
+    // 4. Actualizar el tiempo del próximo inicio
+    nextWindowStartEpoch += 1800; 
+
+    // Ajuste de seguridad: si tardamos más de 30 minutos, 
+    while (nextWindowStartEpoch <= time(nullptr)) {
+        nextWindowStartEpoch += 1800;
+        Serial.println("Warning: Salto de intervalo (Lag detectado).");
+    }
+    
+    Serial.printf("Siguiente inicio de ventana programado: %s", asctime(localtime(&nextWindowStartEpoch)));
+  } else {
+    delay(1000);
   }
 }
+
