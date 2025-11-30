@@ -14,7 +14,7 @@ RTC_DATA_ATTR time_t nextWindowStartEpoch = 0; // MOD (ya lo tenías)
 
 // ===== CONFIG =====
 const int nodeId = 1; // Coordinador
-const int numNodes = 100;
+const int numNodes = 4;
 const unsigned long slotDurationMs = 1000; // 1 segundo por slot
 const unsigned long windowDurationMs = slotDurationMs * numNodes; // Ventana completa
 const int timestampRetries = 5; // Intentos de broadcast de timestamp
@@ -299,56 +299,72 @@ void setup() {
 
 // ===== LOOP =====
 void loop() {
+    // Mantener conexión MQTT
+    if (!mqttClient.connected()) connectMQTT();
+    mqttClient.loop();
 
-  // Mantener conexión MQTT
-  if (!mqttClient.connected()) connectMQTT();
-  mqttClient.loop();
+    // Obtener hora actual
+    time_t nowEpoch = time(nullptr);
 
-  // Obtener hora actual
-  time_t nowEpoch = time(nullptr);
+    // Calcular primer ciclo si no hay ventana programada
+    if (nextWindowStartEpoch == 0) {
+        if (nowEpoch < 1600000000) { 
+            Serial.println("Hora inválida en primer ciclo. Esperando 1s para reintentar loop.");
+            delay(1000);
+            return;
+        }
 
-  if (nextWindowStartEpoch == 0) {
-    if (nowEpoch < 1600000000) {
-      // Si aún no tenemos hora válida, esperamos corto y reintentamos
-      Serial.println("Hora inválida en primer ciclo. Esperando 1s para reintentar loop."); // MOD
-      delay(1000);
-      return;
+        struct tm *lt = localtime(&nowEpoch);
+        long secsToNextMinute = 60 - lt->tm_sec;  // siguiente minuto exacto
+        nextWindowStartEpoch = nowEpoch + secsToNextMinute; // inicio real de ventana
+
+        time_t sleepUntil = nextWindowStartEpoch - WAKE_AHEAD_SECONDS; // despertar antes
+        if (sleepUntil < nowEpoch) sleepUntil = nowEpoch + 1; // evitar valores negativos
+
+        Serial.printf("Primer ciclo. Ventana a iniciar en: %s", asctime(localtime(&nextWindowStartEpoch)));
+        Serial.printf("Despertar programado para: %s", asctime(localtime(&sleepUntil)));
+
+        goToDeepSleep(sleepUntil);
     }
-    struct tm *lt = localtime(&nowEpoch);
-    long secsSinceMidnight = lt->tm_sec + lt->tm_min * 60 + lt->tm_hour * 3600;
-    const long halfHourSecs = 1800;
-    long secsUntilNextHalfHour = halfHourSecs - (secsSinceMidnight % halfHourSecs);
-    // NOTE: previous line purposely left as same algorithm; simpler computation follows:
-    secsUntilNextHalfHour = halfHourSecs - (secsSinceMidnight % halfHourSecs); // MOD simpler correction
 
-    nextWindowStartEpoch = nowEpoch + secsUntilNextHalfHour;
-    Serial.printf("Primer ciclo. Siguiente inicio de ventana: %s", asctime(localtime(&nextWindowStartEpoch)));
-    goToDeepSleep(nextWindowStartEpoch); // MOD
-  }
+    // Verificar si es momento de preparar la ventana
+    time_t wakeTime = nextWindowStartEpoch;
+    if (nowEpoch >= wakeTime) {
+        Serial.printf("\n--- PREPARANDO VENTANA (%s) ---\n", asctime(localtime(&nowEpoch)));
 
-  // Si ya pasó la ventana (despertó WAKE_AHEAD_SECONDS antes)
-  if (nowEpoch >= nextWindowStartEpoch - WAKE_AHEAD_SECONDS) {
-    Serial.printf("\n--- INICIO DE VENTANA (%s) ---\n", asctime(localtime(&nowEpoch)));
-    broadcastTimestamp();
-    storeOwnReading();
-    Serial.println("Recibiendo lecturas nodos...");
-    unsigned long windowStart = millis();
-    while (millis() - windowStart < windowDurationMs) {
-      mqttClient.loop();
-      delay(50);
+        // Broadcast y lectura propia
+        broadcastTimestamp();
+        storeOwnReading();
+
+        // Esperar hasta inicio exacto de la ventana
+        while (time(nullptr) < nextWindowStartEpoch) {
+            mqttClient.loop();
+            delay(50);
+        }
+
+        // Inicio de ventana
+        Serial.printf("--- INICIO DE VENTANA (%s) ---\n", asctime(localtime(&nextWindowStartEpoch)));
+        unsigned long windowStart = millis();
+        while (millis() - windowStart < windowDurationMs) {
+            mqttClient.loop();
+            delay(50);
+        }
+
+        // Publicar lecturas
+        publishMQTT();
+
+        // Programar siguiente ventana
+        nextWindowStartEpoch += 60; // siguiente minuto exacto
+        while (nextWindowStartEpoch <= time(nullptr)) nextWindowStartEpoch += 60;
+
+        Serial.printf("Siguiente ventana programada: %s", asctime(localtime(&nextWindowStartEpoch)));
+
+        // Dormir hasta próxima ventana con anticipación
+        time_t nextSleep = nextWindowStartEpoch - WAKE_AHEAD_SECONDS;
+        goToDeepSleep(nextSleep);
     }
-    publishMQTT();
 
-    // Programar siguiente ventana
-    nextWindowStartEpoch += 1800;
-    while (nextWindowStartEpoch <= time(nullptr)) {
-      nextWindowStartEpoch += 1800;
-      Serial.println("Warning: salto de intervalo.");
-    }
-    Serial.printf("Siguiente ventana: %s", asctime(localtime(&nextWindowStartEpoch)));
-    goToDeepSleep(nextWindowStartEpoch); // MOD
-  }
-
-  delay(500);
+    delay(500);
 }
+
 
