@@ -105,7 +105,7 @@ void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
 void publishMQTT() {
   if (!mqttClient.connected()) { Serial.println("MQTT client not connected — skipping publish."); return; }
 
-  StaticJsonDocument<6144> doc;
+  StaticJsonDocument<4096> doc;
   doc["userId"] = userId;
   doc["locationId"] = thingName;
   doc["timestamp"] = time(nullptr);
@@ -118,14 +118,11 @@ void publishMQTT() {
     o["raw"] = r.raw;
   }
 
-  size_t len = measureJson(doc) + 1;
-  char *buffer = (char*)malloc(len);
-  serializeJson(doc, buffer, len);
+  char buffer[4096];
+  serializeJson(doc, buffer, sizeof(buffer));
   Serial.print("Publishing: "); Serial.println(buffer);
   if (!mqttClient.publish(gatewayTopic.c_str(), buffer)) Serial.println("MQTT publish ERROR");
   else clearBuffer();
-
-  free(buffer);
 }
 
 // ===== STORE COORDINATOR READING =====
