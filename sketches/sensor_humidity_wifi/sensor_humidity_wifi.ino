@@ -17,7 +17,7 @@ const int nodeId = 1; // Coordinador
 const int numNodes = 4;
 const unsigned long slotDurationMs = 1000; // 1 segundo por slot
 const unsigned long windowDurationMs = slotDurationMs * numNodes; // Ventana completa
-const int timestampRetries = 5; // Intentos de broadcast de timestamp
+const int timestampRetries = 3; // Intentos de broadcast de timestamp
 const int WAKE_AHEAD_SECONDS = 20; 
 
 
@@ -79,7 +79,7 @@ void clearBuffer() { readings.clear(); }
 
 // ===== ESP-NOW RECEIVE =====
 void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
-  StaticJsonDocument<256> msg;
+  StaticJsonDocument<8192> msg;
   DeserializationError err = deserializeJson(msg, data, len); // MOD
   if (err) { Serial.println("Ignored packet (invalid JSON)"); return; } // MOD
 
@@ -105,7 +105,7 @@ void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
 void publishMQTT() {
   if (!mqttClient.connected()) { Serial.println("MQTT client not connected — skipping publish."); return; }
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<8192> doc;
   doc["userId"] = userId;
   doc["locationId"] = thingName;
   doc["timestamp"] = time(nullptr);
@@ -234,7 +234,7 @@ void setup() {
 
   String metadata = readFile("/metadata.json");
   if (metadata.length()) {
-    StaticJsonDocument<512> meta;
+    StaticJsonDocument<8192> meta;
     DeserializationError err = deserializeJson(meta, metadata); // MOD
     if (err) { // MOD
       Serial.println("metadata.json invalid"); // MOD
