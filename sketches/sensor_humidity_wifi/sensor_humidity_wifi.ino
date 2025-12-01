@@ -14,7 +14,7 @@ RTC_DATA_ATTR time_t nextWindowStartEpoch = 0; // MOD (ya lo tenías)
 
 // ===== CONFIG =====
 const int nodeId = 1; // Coordinador
-const int numNodes = 4;
+const int numNodes = 100; // Número máximo de nodos esperados
 const unsigned long slotDurationMs = 1000; // 1 segundo por slot
 const unsigned long windowDurationMs = slotDurationMs * numNodes; // Ventana completa
 const int timestampRetries = 3; // Intentos de broadcast de timestamp
@@ -79,7 +79,7 @@ void clearBuffer() { readings.clear(); }
 
 // ===== ESP-NOW RECEIVE =====
 void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
-  StaticJsonDocument<8192> msg;
+  StaticJsonDocument<256> msg;
   DeserializationError err = deserializeJson(msg, data, len); // MOD
   if (err) { Serial.println("Ignored packet (invalid JSON)"); return; } // MOD
 
@@ -105,7 +105,7 @@ void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
 void publishMQTT() {
   if (!mqttClient.connected()) { Serial.println("MQTT client not connected — skipping publish."); return; }
 
-  StaticJsonDocument<8192> doc;
+  StaticJsonDocument<6144> doc;
   doc["userId"] = userId;
   doc["locationId"] = thingName;
   doc["timestamp"] = time(nullptr);
@@ -234,7 +234,7 @@ void setup() {
 
   String metadata = readFile("/metadata.json");
   if (metadata.length()) {
-    StaticJsonDocument<8192> meta;
+    StaticJsonDocument<1024> meta;
     DeserializationError err = deserializeJson(meta, metadata); // MOD
     if (err) { // MOD
       Serial.println("metadata.json invalid"); // MOD
@@ -315,7 +315,7 @@ void loop() {
         }
 
         struct tm *lt = localtime(&nowEpoch);
-        long secsToNextMinute = 60 - lt->tm_sec;  // siguiente minuto exacto
+        long secsToNextMinute = 1800 - (lt->tm_min % 30) * 60 - lt->tm_sec;  // segundos hasta próximo minuto exacto (00 o 30)
         nextWindowStartEpoch = nowEpoch + secsToNextMinute; // inicio real de ventana
 
         time_t sleepUntil = nextWindowStartEpoch - WAKE_AHEAD_SECONDS; // despertar antes
@@ -354,8 +354,8 @@ void loop() {
         publishMQTT();
 
         // Programar siguiente ventana
-        nextWindowStartEpoch += 60; // siguiente minuto exacto
-        while (nextWindowStartEpoch <= time(nullptr)) nextWindowStartEpoch += 60;
+        nextWindowStartEpoch += 1800; // siguiente minuto exacto
+        while (nextWindowStartEpoch <= time(nullptr)) nextWindowStartEpoch += 1800;
 
         Serial.printf("Siguiente ventana programada: %s", asctime(localtime(&nextWindowStartEpoch)));
 
@@ -366,5 +366,3 @@ void loop() {
 
     delay(500);
 }
-
-
