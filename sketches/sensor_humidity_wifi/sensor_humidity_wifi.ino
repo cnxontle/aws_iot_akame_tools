@@ -14,7 +14,7 @@ RTC_DATA_ATTR time_t nextWindowStartEpoch = 0; // MOD (ya lo tenías)
 
 // ===== CONFIG =====
 const int nodeId = 1; // Coordinador
-const int numNodes = 100; // Número máximo de nodos esperados
+const int numNodes = 50; // Número máximo de nodos esperados
 const unsigned long slotDurationMs = 1000; // 1 segundo por slot
 const unsigned long windowDurationMs = slotDurationMs * numNodes; // Ventana completa
 const int timestampRetries = 3; // Intentos de broadcast de timestamp
