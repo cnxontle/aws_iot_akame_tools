@@ -69,8 +69,8 @@ void clearBuffer() { readings.clear(); }
 // ===== ESP-NOW RECEIVE =====
 void onEspNowRecv(const esp_now_recv_info *info, const uint8_t *data, int len) {
   StaticJsonDocument<256> msg;
-  DeserializationError err = deserializeJson(msg, data, len); // MOD
-  if (err) { Serial.println("Ignored packet (invalid JSON)"); return; } // MOD
+  DeserializationError err = deserializeJson(msg, data, len); 
+  if (err) { Serial.println("Ignored packet (invalid JSON)"); return; } 
 
   if (!msg.containsKey("userId") || !msg.containsKey("locationId") ||
       !msg.containsKey("nodeId") || !msg.containsKey("humidity") ||
@@ -166,33 +166,33 @@ void connectMQTT() {
 }
 
 // ===== DEEP SLEEP MANAGER =====
-void goToDeepSleep(time_t nextWindowStart) {  // MOD
-  time_t nowEpoch = time(nullptr); // MOD
-  long sleepSeconds = 0; // MOD
+void goToDeepSleep(time_t nextWindowStart) {  
+  time_t nowEpoch = time(nullptr); 
+  long sleepSeconds = 0; 
 
-  // Si la hora no es válida, no programamos un sleep largo: dormimos poco y forzamos resync. // MOD
+  // Si la hora no es válida, no programamos un sleep largo: dormimos poco y forzamos resync.
   if (nowEpoch < 1600000000) { // tiempo inválido -> NTP no sincronizado
-    Serial.println("Time NOT valid. Sleeping short to allow resync on wake. Clearing nextWindowStartEpoch."); // MOD
-    nextWindowStartEpoch = 0; // forzar recálculo después de wake (MOD)
-    sleepSeconds = 60; // duerme 60s y vuelve a intentar (MOD)
+    Serial.println("Time NOT valid. Sleeping short to allow resync on wake. Clearing nextWindowStartEpoch.");
+    nextWindowStartEpoch = 0; 
+    sleepSeconds = 60; 
   } else {
     long diff = (long)(nextWindowStart - WAKE_AHEAD_SECONDS - nowEpoch);
     if (diff < 1) diff = 1;
-    // cap razonable (ej. 30 días en segundos) para evitar valores absurdos (opcional)
+    // cap razonable (ej. 30 días en segundos) para evitar valores absurdos 
     const long maxSleep = 30L * 24 * 3600;
     if (diff > maxSleep) diff = maxSleep;
     sleepSeconds = diff;
   }
 
-  Serial.printf("Deep sleep for %ld seconds...\n", sleepSeconds); // MOD
+  Serial.printf("Deep sleep for %ld seconds...\n", sleepSeconds);
 
-  // desconectar / apagar radios antes de dormir (ya lo tenías pero lo dejo claro) // MOD
-  if (mqttClient.connected()) mqttClient.disconnect(); // MOD
-  WiFi.disconnect(true); // MOD
-  esp_wifi_stop(); // MOD
-  WiFi.mode(WIFI_OFF); // MOD
-  btStop(); // MOD
-  delay(20); // pequeño margen
+  // desconectar / apagar radios antes de dormir 
+  if (mqttClient.connected()) mqttClient.disconnect(); 
+  WiFi.disconnect(true); 
+  esp_wifi_stop();
+  WiFi.mode(WIFI_OFF); 
+  btStop();
+  delay(20); 
 
   // habilitar wakeup por timer
   esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
@@ -205,9 +205,9 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  // Mostrar causa de wakeup para debug (muy útil) // MOD
-  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause(); // MOD
-  Serial.printf("Wakeup cause: %d\n", (int)wakeCause); // MOD
+  // Mostrar causa de wakeup para debug 
+  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause(); 
+  Serial.printf("Wakeup cause: %d\n", (int)wakeCause); 
 
   // ===== USAR LoadInfo =====
   if (!info.begin()) {
@@ -227,15 +227,15 @@ void setup() {
   WiFi.begin(info.ssid.c_str(), info.wifiPassword.c_str());
   Serial.println("Connecting WiFi...");
   // esperar WiFi con timeout para no quedarnos bloqueados indefinidamente
-  unsigned long wifiStart = millis(); // MOD
-  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) { // 15s timeout (MOD)
+  unsigned long wifiStart = millis(); 
+  while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 15000) { 
     delay(200); Serial.print("."); 
   }
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi connected");
     wifi_ap_record_t apInfo;
-    if (esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK) { // MOD
+    if (esp_wifi_sta_get_ap_info(&apInfo) == ESP_OK) { 
       uint8_t wifiChannel = apInfo.primary;
       Serial.print("WiFi channel = "); Serial.println(wifiChannel);
       esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
@@ -247,16 +247,15 @@ void setup() {
       peerInfo.encrypt = false;
       esp_now_add_peer(&peerInfo);
     } else {
-      Serial.println("No AP info available"); // MOD
+      Serial.println("No AP info available");
     }
   } else {
-    Serial.println("WiFi failed to connect within timeout"); // MOD
+    Serial.println("WiFi failed to connect within timeout"); 
   }
 
-  // sincronizar hora (si falla, lo manejamos en goToDeepSleep con sleeps cortos) // MOD
-  syncTime(8000); // MOD
+  // sincronizar hora (si falla, lo manejamos en goToDeepSleep con sleeps cortos) 
+  syncTime(8000); 
   connectMQTT();
-
   Serial.println("Setup done.");
 }
 
@@ -277,9 +276,7 @@ void loop() {
             return;
         }
 
-        struct tm *lt = localtime(&nowEpoch);
-        long secsToNextMinute = 1800 - (lt->tm_min % 30) * 60 - lt->tm_sec;  // segundos hasta próximo minuto exacto (00 o 30)
-        nextWindowStartEpoch = nowEpoch + secsToNextMinute; // inicio real de ventana
+        nextWindowStartEpoch = (nowEpoch / 1800) * 1800 + 1800;
 
         time_t sleepUntil = nextWindowStartEpoch - WAKE_AHEAD_SECONDS; // despertar antes
         if (sleepUntil < nowEpoch) sleepUntil = nowEpoch + 1; // evitar valores negativos
@@ -317,9 +314,8 @@ void loop() {
         publishMQTT();
 
         // Programar siguiente ventana
-        nextWindowStartEpoch += 1800; // siguiente minuto exacto
+        nextWindowStartEpoch += 1800; 
         while (nextWindowStartEpoch <= time(nullptr)) nextWindowStartEpoch += 1800;
-
         Serial.printf("Siguiente ventana programada: %s", asctime(localtime(&nextWindowStartEpoch)));
 
         // Dormir hasta próxima ventana con anticipación
