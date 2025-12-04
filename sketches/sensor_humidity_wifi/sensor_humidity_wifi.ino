@@ -22,6 +22,7 @@ const unsigned long slotDurationMs = 1000;
 const unsigned long windowDurationMs = slotDurationMs * numNodes;
 const int timestampRetries = 3;
 const long WINDOW_PERIOD_SECONDS = 1800; // 30 minutos
+const int PRE_WAKE_SECONDS = 5;        // Despertar 5 segundos antes de la ventana
 
 // GLOBALS
 LoadInfo info;
@@ -111,7 +112,7 @@ void goToDeepSleep(time_t nextWindowStart) {
     sleepSeconds = 60;
   } else {
     // Dormir hasta el inicio exacto de la próxima ventana.
-    long diff = (long)(nextWindowStart - nowEpoch);
+    long diff = (nextWindowStart - nowEpoch) - PRE_WAKE_SECONDS;
     if (diff < 1) diff = 1;
     const long maxSleep = 30L * 24 * 3600;
     if (diff > maxSleep) diff = maxSleep;
@@ -148,6 +149,17 @@ void setup() {
     Serial.println("ESP-NOW init ERROR");
   else
     Serial.println("ESP-NOW ready");
+  esp_now_peer_info_t peerInfo;
+  memset(&peerInfo, 0, sizeof(peerInfo));
+  memset(peerInfo.peer_addr, 0xFF, 6);
+  peerInfo.channel  = 1;   // mismo canal donde iniciaste ESP-NOW
+  peerInfo.encrypt  = false;
+
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      Serial.println("Error agregando broadcast peer");
+  } else {
+      Serial.println("Broadcast peer added");
+  }
   esp_now_register_recv_cb(onEspNowRecv);
   Serial.println("Setup done. Waiting for window start...");
 }
