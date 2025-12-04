@@ -235,6 +235,7 @@ void loop() {
     }
   }
   wifiBootstrap.disconnect();
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 
   // === PROGRAMAR SIGUIENTE VENTANA ===
   nextWindowStartEpoch += WINDOW_PERIOD_SECONDS;
