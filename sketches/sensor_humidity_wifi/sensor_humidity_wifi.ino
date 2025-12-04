@@ -21,7 +21,7 @@ const int numNodes = 50;
 const unsigned long slotDurationMs = 1000;
 const unsigned long windowDurationMs = slotDurationMs * numNodes;
 const int timestampRetries = 3;
-const long WINDOW_PERIOD_SECONDS = 1800; // 30 minutos
+const long WINDOW_PERIOD_SECONDS = 1800; // 5 minutos
 const int PRE_WAKE_SECONDS = 5;        // Despertar 5 segundos antes de la ventana
 
 // GLOBALS
@@ -170,74 +170,78 @@ void loop() {
 
   // === LÓGICA DE PRIMER CICLO/SIN HORA ===
   if (nextWindowStartEpoch == 0) {
-    
-    // Conectar WiFi y sincronizar hora para el primer cálculo de ventana.
     Serial.println("Primer ciclo o sin hora. Conectando WiFi para sincronización...");
     bool wifiOk = wifiBootstrap.begin(info.ssid.c_str(), info.wifiPassword.c_str(), 15000);
     if (!wifiOk) {
       Serial.println("ERROR: WiFi falló en el primer ciclo. Reintentando...");
-      goToDeepSleep(nowEpoch + 60);   // Dormir corto si no hay conexión para reintentar.
+      goToDeepSleep(nowEpoch + 60);
     }
     wifiBootstrap.syncTime(8000);
     nowEpoch = time(nullptr);
-    if (nowEpoch < 1600000000) {       // Si la hora sigue siendo inválida después de la sincronización.
+
+    if (nowEpoch < 1600000000) {
       Serial.println("Hora inválida después de sincronización. Reintentando...");
       goToDeepSleep(nowEpoch + 60);
     }
-    // Calcular el inicio de la próxima ventana de 30 minutos.
-    nextWindowStartEpoch = (nowEpoch / WINDOW_PERIOD_SECONDS) * WINDOW_PERIOD_SECONDS + WINDOW_PERIOD_SECONDS;
+    // Calcular inicio de la siguiente ventana
+    nextWindowStartEpoch =
+        (nowEpoch / WINDOW_PERIOD_SECONDS) * WINDOW_PERIOD_SECONDS + WINDOW_PERIOD_SECONDS;
     Serial.printf("Primer ciclo, ventana: %s", asctime(localtime(&nextWindowStartEpoch)));
     goToDeepSleep(nextWindowStartEpoch);
   }
 
+
   // === INICIO DE VENTANA DE RECOLECCIÓN (ESP-NOW) ===
-  if (abs(nowEpoch - nextWindowStartEpoch) < 5) {     // nowEpoch debe ser aproximadamente igual a nextWindowStartEpoch
-    Serial.printf("\n--- INICIO DE VENTANA DE RECOLECCIÓN (%s) ---\n", 
-                  asctime(localtime(&nowEpoch)));
-    broadcastTimestamp();
-    storeOwnReading();
-
-    // 3. Esperar la duración de la ventana para recibir mensajes de los nodos.
-    unsigned long start = millis();
-    while (millis() - start < windowDurationMs) {
-      delay(50);
+  if (nowEpoch < nextWindowStartEpoch) {
+    Serial.printf("Esperando al inicio exacto de la ventana... ahora=%ld objetivo=%ld\n",
+                  nowEpoch, nextWindowStartEpoch);
+    while (true) {
+      nowEpoch = time(nullptr);
+      if (nowEpoch >= nextWindowStartEpoch)
+        break;
+      delay(100); 
     }
-    Serial.printf("--- FIN DE VENTANA DE RECOLECCIÓN (%s) ---\n", 
-                  asctime(localtime(&nowEpoch)));
-    esp_now_deinit();
-    
-    // === PUBLICACIÓN (WIFI/MQTT) ===
-    Serial.println("Conectando WiFi/MQTT para publicación...");
-    bool wifiOk = wifiBootstrap.begin(info.ssid.c_str(), info.wifiPassword.c_str(), 15000);
-    if (wifiOk) {
-    wifiBootstrap.syncTime(8000); // Sincronizar hora
-    mqttManager.begin(&info);
-
-    if (mqttManager.connect()) {
-        Serial.printf("Publicando %d lecturas via MQTT...\n", readings.size());
-
-        if (mqttManager.publishReadings(readings)) {
-            unsigned long t0 = millis();
-            while (millis() - t0 < 2000) {
-                mqttManager.loop();   // permite reintentos internos del cliente MQTT
-                delay(10);
-            }
-            readings.clear();
-        }
-
-        mqttManager.disconnect();
-    }
-}
-    wifiBootstrap.disconnect();
-    
-    // === PROGRAMAR EL SIGUIENTE SUEÑO ===
-    nextWindowStartEpoch += WINDOW_PERIOD_SECONDS; 
-    while (nextWindowStartEpoch <= time(nullptr))
-      nextWindowStartEpoch += WINDOW_PERIOD_SECONDS;
-    Serial.printf("Siguiente ventana programada: %s", asctime(localtime(&nextWindowStartEpoch)));
-    goToDeepSleep(nextWindowStartEpoch);
   }
+  // EXACTAMENTE EL INICIO DE LA VENTANA
+  Serial.printf("\n--- INICIO DE VENTANA DE RECOLECCIÓN (%s) ---\n",
+                asctime(localtime(&nowEpoch)));
+  broadcastTimestamp();
+  storeOwnReading();
+  unsigned long start = millis();
+  while (millis() - start < windowDurationMs) {
+    delay(50);
+  }
+  Serial.printf("--- FIN DE VENTANA DE RECOLECCIÓN (%s) ---\n",
+                asctime(localtime(&nowEpoch)));
+  esp_now_deinit();
 
-  // Esto es un fallback, no debería ejecutarse con la lógica de Deep Sleep
-  delay(500); 
+  // === PUBLICACIÓN (WIFI/MQTT) ===
+  Serial.println("Conectando WiFi/MQTT para publicación...");
+  bool wifiOk = wifiBootstrap.begin(info.ssid.c_str(), info.wifiPassword.c_str(), 15000);
+  if (wifiOk) {
+    wifiBootstrap.syncTime(8000);
+    mqttManager.begin(&info);
+    if (mqttManager.connect()) {
+      Serial.printf("Publicando %d lecturas via MQTT...\n", readings.size());
+      if (mqttManager.publishReadings(readings)) {
+        unsigned long t0 = millis();
+        while (millis() - t0 < 2000) {
+          mqttManager.loop();
+          delay(10);
+        }
+        readings.clear();
+      }
+      mqttManager.disconnect();
+    }
+  }
+  wifiBootstrap.disconnect();
+
+  // === PROGRAMAR SIGUIENTE VENTANA ===
+  nextWindowStartEpoch += WINDOW_PERIOD_SECONDS;
+  while (nextWindowStartEpoch <= time(nullptr))
+    nextWindowStartEpoch += WINDOW_PERIOD_SECONDS;
+
+  Serial.printf("Siguiente ventana programada: %s",
+                asctime(localtime(&nextWindowStartEpoch)));
+  goToDeepSleep(nextWindowStartEpoch);
 }
