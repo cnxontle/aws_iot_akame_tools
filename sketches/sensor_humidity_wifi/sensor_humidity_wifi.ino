@@ -21,7 +21,7 @@ const int numNodes = 50;
 const unsigned long slotDurationMs = 1000;
 const unsigned long windowDurationMs = slotDurationMs * numNodes;
 const int timestampRetries = 3;
-const long WINDOW_PERIOD_SECONDS = 1800; // 5 minutos
+const long WINDOW_PERIOD_SECONDS = 300; // 5 minutos
 const int PRE_WAKE_SECONDS = 5;        // Despertar 5 segundos antes de la ventana
 
 // GLOBALS
@@ -31,7 +31,15 @@ MqttClientManager mqttManager;
 
 std::vector<Reading> readings;
 
-// Funciones addReading, clearBuffer, onEspNowRecv, storeOwnReading, broadcastTimestamp 
+
+// MOD: DEFINICIÓN DE ESTRUCTURA Y COLA PARA MENSAJES ESP-NOW
+struct EspNowPacket {               
+  int nodeId;                       
+  float humidity;                   
+  int raw;                          
+};                                  
+QueueHandle_t espNowQueue = NULL;   
+
 void addReading(int id, float hum, int raw) {
   for (Reading &r : readings) {
     if (r.nodeId == id) {
@@ -49,30 +57,25 @@ void clearBuffer() {
   readings.clear();
 }
 
-void onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *data, int len) {
-  StaticJsonDocument<256> msg;
-  if (deserializeJson(msg, data, len)) {
-    Serial.println("Ignored packet (invalid JSON)");
+// MOD: CALLBACK ISR SEGURO (solo parsea mínimo y encola con xQueueSendFromISR)
+void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *data, int len) {
+  StaticJsonDocument<128> doc; 
+  DeserializationError err = deserializeJson(doc, data, len); 
+  if (err != DeserializationError::Ok) { 
     return;
-  }
-
-  if (!msg.containsKey("userId") ||
-      !msg.containsKey("locationId") ||
-      !msg.containsKey("nodeId") ||
-      !msg.containsKey("humidity") ||
-      !msg.containsKey("raw")) {
-    Serial.println("Ignored packet (incomplete JSON)");
+  } 
+  if (!doc.containsKey("nodeId") || !doc.containsKey("humidity") || !doc.containsKey("raw")) { 
     return;
-  }
+  } 
+  EspNowPacket pkt;
+  pkt.nodeId = doc["nodeId"]; 
+  pkt.humidity = doc["humidity"];
+  pkt.raw = doc["raw"]; 
 
-  if (String(msg["userId"]) != info.userId ||
-      String(msg["locationId"]) != info.thingName) {
-    Serial.println("Ignored packet (belongs to different system)");
-    return;
-  }
-
-  addReading(msg["nodeId"], msg["humidity"], msg["raw"]);
-}
+  // Enviar a la cola desde ISR 
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE; 
+  xQueueSendFromISR(espNowQueue, &pkt, &xHigherPriorityTaskWoken); 
+} 
 
 void storeOwnReading() {
   const int rawDry = 2259;
@@ -95,7 +98,7 @@ void broadcastTimestamp() {
   for (int i = 0; i < timestampRetries; i++) {
     esp_err_t r = esp_now_send(bcast, (uint8_t*)buffer, len);
     if (r == ESP_OK)
-      Serial.printf("Broadcast timestamp %u (try %d)\n", time(nullptr), i+1);
+      Serial.printf("Broadcast timestamp %u (try %d)\n", time(nullptr));
     delay(1000);
   }
 }
@@ -142,6 +145,13 @@ void setup() {
   Serial.println("userId: " + info.userId);
   Serial.println("================");
 
+ 
+  // MOD: Crear la cola antes de registrar el callback ISR
+  espNowQueue = xQueueCreate(50, sizeof(EspNowPacket)); 
+  if (!espNowQueue) { 
+    Serial.println("ERROR: Queue not created"); 
+  } 
+
   // Inicializar ESP-NOW
   WiFi.mode(WIFI_STA); 
   esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
@@ -152,7 +162,7 @@ void setup() {
   esp_now_peer_info_t peerInfo;
   memset(&peerInfo, 0, sizeof(peerInfo));
   memset(peerInfo.peer_addr, 0xFF, 6);
-  peerInfo.channel  = 1;   // mismo canal donde iniciaste ESP-NOW
+  peerInfo.channel  = 1;  
   peerInfo.encrypt  = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
@@ -160,9 +170,19 @@ void setup() {
   } else {
       Serial.println("Broadcast peer added");
   }
-  esp_now_register_recv_cb(onEspNowRecv);
+
+  // registrar la ISR modificada (la que ahora encola mensajes)
+  esp_now_register_recv_cb(onEspNowRecv); 
   Serial.println("Setup done. Waiting for window start...");
 }
+
+// función para procesar mensajes pendientes de la cola desde el loop
+void processIncomingPackets() { 
+  EspNowPacket pkt; 
+  while (xQueueReceive(espNowQueue, &pkt, 0) == pdTRUE) { 
+    addReading(pkt.nodeId, pkt.humidity, pkt.raw); 
+  } 
+} 
 
 // LOOP
 void loop() {
@@ -209,8 +229,12 @@ void loop() {
   storeOwnReading();
   unsigned long start = millis();
   while (millis() - start < windowDurationMs) {
-    delay(50);
+    processIncomingPackets();
+    delay(10); // reducir latency al procesar cola
   }
+  // Asegurarse de procesar cualquier paquete restante justo después de la ventana
+  processIncomingPackets(); 
+
   Serial.printf("--- FIN DE VENTANA DE RECOLECCIÓN (%s) ---\n",
                 asctime(localtime(&nowEpoch)));
   esp_now_deinit();
