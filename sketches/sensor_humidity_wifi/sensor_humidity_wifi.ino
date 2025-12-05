@@ -232,7 +232,6 @@ void loop() {
     processIncomingPackets();
     delay(10); // reducir latency al procesar cola
   }
-  // Asegurarse de procesar cualquier paquete restante justo después de la ventana
   processIncomingPackets(); 
 
   Serial.printf("--- FIN DE VENTANA DE RECOLECCIÓN (%s) ---\n",
