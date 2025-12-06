@@ -21,7 +21,7 @@ const int numNodes = 50;
 const unsigned long slotDurationMs = 1000;
 const unsigned long windowDurationMs = slotDurationMs * numNodes;
 const int timestampRetries = 3;
-const long WINDOW_PERIOD_SECONDS = 1800; // 5 minutos
+const long WINDOW_PERIOD_SECONDS = 1800; // 30 minutos
 const int PRE_WAKE_SECONDS = 5;        // Despertar 5 segundos antes de la ventana
 
 // VARIABLES GLOBALES
