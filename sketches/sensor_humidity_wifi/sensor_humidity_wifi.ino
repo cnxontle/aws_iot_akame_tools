@@ -72,9 +72,9 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *da
   }
 }
 
-// ----------------- Leer propio sensor -----------------
+// Leer el propio sensor
 void storeOwnReading() {
-  const int rawDry = 2259;
+  const int rawDry = 2509;
   const int rawWet = 939;
 
   int raw = analogRead(34);
@@ -232,16 +232,12 @@ void loop() {
 
 
   // INICIO DE VENTANA DE RECOLECCIÓN (ESP-NOW)
-  if (nowEpoch < nextWindowStartEpoch) {
-    Serial.printf("Esperando al inicio exacto de la ventana... ahora=%ld objetivo=%ld\n",
-                  nowEpoch, nextWindowStartEpoch);
-    while (true) {
-      nowEpoch = time(nullptr);
-      if (nowEpoch >= nextWindowStartEpoch)
-        break;
-      delay(100); 
-    }
+  Serial.printf("Esperando al inicio exacto de la ventana... ahora=%ld objetivo=%ld\n",
+                nowEpoch, nextWindowStartEpoch);
+  while (time(nullptr) < nextWindowStartEpoch) {
+      delay(20);
   }
+  nowEpoch = time(nullptr);
   // EXACTAMENTE EL INICIO DE LA VENTANA
   Serial.printf("\n--- INICIO DE VENTANA DE RECOLECCIÓN (%s) ---\n",
                 asctime(localtime(&nowEpoch)));
