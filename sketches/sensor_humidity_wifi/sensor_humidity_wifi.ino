@@ -245,10 +245,10 @@ void loop() {
   storeOwnReading();
 
 
-  time_t windowEnd = nextWindowStartEpoch + (windowDurationMs / 1000); // windowDurationMs divisible por 1000
-  while (time(nullptr) < windowEnd) {
-  processIncomingPackets();
-  delay(5);
+  unsigned long start = millis();
+  while (millis() - start < windowDurationMs) { // windowDurationMs = 50000
+    processIncomingPackets();
+    delay(10); // Mantener el delay bajo para procesar la cola rápidamente
   }
   processIncomingPackets(); 
 
