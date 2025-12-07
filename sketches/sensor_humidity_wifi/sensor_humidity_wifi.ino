@@ -1,7 +1,4 @@
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <PubSubClient.h>
-#include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <vector>
 #include <esp_now.h>
@@ -19,10 +16,12 @@ RTC_DATA_ATTR time_t nextWindowStartEpoch = 0;
 const int nodeId = 1;
 const int numNodes = 50;
 const unsigned long slotDurationMs = 1000;
-const unsigned long windowDurationMs = slotDurationMs * numNodes;
+const unsigned long windowDurationMs = slotDurationMs * numNodes + 2000; // añadir margen de 2 segundos
 const int timestampRetries = 3;
-const long WINDOW_PERIOD_SECONDS = 1800; // 30 minutos
+const long WINDOW_PERIOD_SECONDS = 300; // 5 minutos
 const int PRE_WAKE_SECONDS = 5;        // Despertar 5 segundos antes de la ventana
+const int rawdry = 2509;
+const int rawwet = 939;
 
 // VARIABLES GLOBALES
 LoadInfo info;
@@ -74,15 +73,24 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *da
 
 // Leer el propio sensor
 void storeOwnReading() {
-  const int rawDry = 2509;
-  const int rawWet = 939;
-
-  int raw = analogRead(34);
-  float hum = (rawDry - raw) * 100.0 / (rawDry - rawWet);
-  hum = constrain(hum, 0, 100);
-
-  addReading(nodeId, hum, raw);
+    int readings[5];
+    for (int i = 0; i < 5; i++) {
+        readings[i] = analogRead(34);
+        delay(5);  
+    }
+    std::sort(readings, readings + 5);
+    int raw = (readings[1] + readings[2] + readings[3]) / 3; 
+    float denominator = rawdry - rawwet;
+    float hum;
+    if (denominator == 0) {
+        hum = 0;
+    } else {
+        hum = (rawdry - raw) * 100.0 / denominator;
+        hum = constrain(hum, 0, 100);
+    }
+    addReading(nodeId, hum, raw);
 }
+
 
 //  Broadcast timestamp seguro
 void broadcastTimestamp() {
@@ -248,7 +256,7 @@ void loop() {
   unsigned long start = millis();
   while (millis() - start < windowDurationMs) { // windowDurationMs = 50000
     processIncomingPackets();
-    delay(10); // Mantener el delay bajo para procesar la cola rápidamente
+    delay(5); // Mantener el delay bajo para procesar la cola rápidamente
   }
   processIncomingPackets(); 
 

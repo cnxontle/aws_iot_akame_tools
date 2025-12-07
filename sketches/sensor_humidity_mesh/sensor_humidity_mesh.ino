@@ -4,20 +4,25 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "esp_sleep.h"
-
-// --------------------- CONFIG ------------------------
-const int nodeId = 3;                // <- cambia por nodo
-const unsigned long slotDurationMs = 1000;
-const int numNodes = 50;
-const long WINDOW_PERIOD_SEC = 300; // 5 minutos
-
 #define ESPNOW_CHANNEL 1
 
 RTC_DATA_ATTR time_t lastTimestamp = 0;
 
+// --------------------- CONFIG ------------------------
+const int nodeId = 50;                // <- cambia por nodo
+const unsigned long slotDurationMs = 1000;
+const int numNodes = 50;             // cantidad de nodos activos en la red
+const int maxNodes = 255;            // capacidad máxima teórica del mesh
+const long WINDOW_PERIOD_SEC = 300;  // 5 minutos
+const int rawdry = 2509;            // calibración sensor humedad
+const int rawwet = 939;
+
 // Flags
 volatile bool timestampReceived = false;
 volatile time_t receivedTimestamp = 0;
+static bool firstTs = false;
+bool timestampForwarded = false;
+bool forwardedNode[maxNodes + 1];  
 
 // Paquetes recibidos fuera de ISR
 struct RawPkt {
@@ -26,17 +31,18 @@ struct RawPkt {
 };
 QueueHandle_t espNowQueue;
 
-// ---------------------- ISR ---------------------------
+// ISR
 void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv,
                             const uint8_t *data, int len)
 {
   StaticJsonDocument<128> doc;
   DeserializationError err = deserializeJson(doc, data, len);
 
-  if (!err && doc.containsKey("timestamp")) {
+  if (!err && doc.containsKey("timestamp") && !firstTs) {
     receivedTimestamp = (time_t)doc["timestamp"];
     timestampReceived = true;
-  }
+    firstTs = true;
+}
 
   // Encolamos SIEMPRE el paquete para retransmitir
   RawPkt pkt;
@@ -49,17 +55,27 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv,
   if (xHigherPriorityTaskWoken) portYIELD_FROM_ISR();
 }
 
-// ------------------- sensor --------------------
+// sensor
 void readHumidity(float &hum, int &raw) {
-  const int rawDry = 2509;
-  const int rawWet = 939;
+    int readings[5];
+    for (int i = 0; i < 5; i++) {
+        readings[i] = analogRead(34);
+        delay(5);
+    }
+    // Ordenamos parcialmente para obtener la mediana
+    std::sort(readings, readings + 5);
+    raw = (readings[1] + readings[2] + readings[3]) / 3;  // 3 valores centrales
 
-  raw = analogRead(34);
-  hum = (rawDry - raw) * 100.0 / (rawDry - rawWet);
-  hum = constrain(hum, 0, 100);
+    float denominator = rawdry - rawwet;
+    if (denominator == 0) {
+        hum = 0;
+        return;
+    }
+    hum = (rawdry - raw) * 100.0 / denominator;
+    hum = constrain(hum, 0, 100);
 }
 
-// ------------------ send reading ----------------
+// send reading
 void sendReading(float hum, int raw) {
   StaticJsonDocument<128> doc;
   doc["nodeId"]   = nodeId;
@@ -73,31 +89,55 @@ void sendReading(float hum, int raw) {
   esp_now_send(bcast, (uint8_t*)buffer, len);
 }
 
-// ---------------- rebroadcast -----------------
+//  rebroadcast
 void rebroadcastIncoming() {
-  RawPkt pkt;
-  while (xQueueReceive(espNowQueue, &pkt, 0) == pdTRUE) {
-    // Los paquetes timestamp NO se reenvían
-    StaticJsonDocument<128> doc;
-    if (!deserializeJson(doc, pkt.data, pkt.len)) {
-      if (doc.containsKey("timestamp"))
+    RawPkt pkt;
+    
+    while (xQueueReceive(espNowQueue, &pkt, 0) == pdTRUE) {
+        StaticJsonDocument<128> doc;
+        bool parsed = (deserializeJson(doc, pkt.data, pkt.len) == DeserializationError::Ok);
+
+        // TIMESTAMP
+        if (parsed && doc.containsKey("timestamp")) {
+            if (!timestampForwarded) {
+                timestampForwarded = true;
+                uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+                esp_now_send(bcast, pkt.data, pkt.len);
+            }
+            continue; 
+        }
+
+        // MENSAJE DE NODO
+        if (parsed && doc.containsKey("nodeId")) {
+            int id = doc["nodeId"];
+            if (id < 1 || id > maxNodes) continue;
+
+            // Reenviar solo la primera vez
+            if (!forwardedNode[id]) {
+                forwardedNode[id] = true;
+                uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+                esp_now_send(bcast, pkt.data, pkt.len);
+            }
+            continue; 
+        }
+
+        // PAQUETE DESCONOCIDO
         continue;
     }
-
-    uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-    esp_now_send(bcast, pkt.data, pkt.len);
-  }
 }
 
-// -------------------- SETUP ----------------------
+
+// SETUP 
 void setup() {
   Serial.begin(115200);
   delay(200);
 
+  memset(forwardedNode, 0, sizeof(forwardedNode));
   WiFi.mode(WIFI_STA);
   esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
   espNowQueue = xQueueCreate(64, sizeof(RawPkt));
+  
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW init FAIL");
@@ -111,14 +151,15 @@ void setup() {
 
   esp_now_register_recv_cb(onEspNowRecv);
 
-  Serial.println("Nodo listo. Esperando timestamp INDEFINIDAMENTE...");
+  Serial.println("Nodo listo. Esperando timestamp...");
 }
 
-// ---------------------- LOOP --------------------------
+// LOOP
 void loop() {
 
-  // 1. Esperar INDEFINIDAMENTE hasta recibir timestamp
+  // 1. Esperar hasta recibir timestamp
   while (!timestampReceived) {
+    rebroadcastIncoming();
     delay(10);
   }
 
@@ -133,14 +174,14 @@ void loop() {
 
   // 2. Calcular inicio/fin de ventana
   unsigned long windowStartMs = millis();  // comienzo exacto de ventana
-  unsigned long mySlotMs = nodeId * slotDurationMs;
+  unsigned long mySlotMs = nodeId * slotDurationMs;            
   unsigned long windowEndMs = windowStartMs + slotDurationMs * numNodes;
 
   // 3. Esperar hasta mi slot exacto
   while (millis() < mySlotMs + windowStartMs) {
     rebroadcastIncoming();
     delay(5);
-  }
+  } 
 
   // 4. Leer y enviar mis datos
   float hum; int raw;
@@ -158,7 +199,7 @@ void loop() {
   Serial.println("Ventana terminada. Durmiendo hasta la siguiente...");
 
   // 6. Programar deep sleep hasta la próxima ventana
-  time_t nextWake = lastTimestamp + WINDOW_PERIOD_SEC - 5;
+  time_t nextWake = lastTimestamp + WINDOW_PERIOD_SEC - 12;
   time_t now = time(nullptr);
   long sleepSec = nextWake - now;
   if (sleepSec < 5) sleepSec = 5;
@@ -170,5 +211,8 @@ void loop() {
 
   esp_sleep_enable_timer_wakeup((uint64_t)sleepSec * 1000000ULL);
   Serial.flush();
+  firstTs = false;
+  timestampForwarded = false;
+  memset(forwardedNode, 0, sizeof(forwardedNode));
   esp_deep_sleep_start();
 }
