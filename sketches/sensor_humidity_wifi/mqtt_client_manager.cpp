@@ -48,7 +48,7 @@ bool MqttClientManager::publishReadings(const std::vector<Reading> &readings) {
         return false;
     }
 
-    StaticJsonDocument<4096> doc;
+    DynamicJsonDocument doc(8192);
     doc["userId"] = info->userId;
     doc["locationId"] = info->thingName;
     doc["timestamp"] = time(nullptr);
@@ -62,11 +62,16 @@ bool MqttClientManager::publishReadings(const std::vector<Reading> &readings) {
         o["raw"] = r.raw;
     }
 
-    char buffer[4096];
-    serializeJson(doc, buffer);
+    String payload;
+    serializeJson(doc, payload);
 
     Serial.print("Publishing: ");
-    Serial.println(buffer);
+    Serial.println(payload);
+     Serial.printf("Payload length = %d bytes\n", payload.length());
 
-    return mqttClient.publish(info->gatewayTopic.c_str(), buffer);
+    return mqttClient.publish(
+        info->gatewayTopic.c_str(),
+        (uint8_t*)payload.c_str(),
+        payload.length()
+    );
 }

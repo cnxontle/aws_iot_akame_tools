@@ -1,7 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
-#include <PubSubClient.h>
+#include <PubSubClientCustom.h>
 #include <ArduinoJson.h>
 #include <vector>
 #include "load_info.h"
