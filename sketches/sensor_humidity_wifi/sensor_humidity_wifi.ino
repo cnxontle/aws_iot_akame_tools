@@ -71,26 +71,6 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *da
   }
 }
 
-// Imprimir estado del heap
-void printHeap(const char *tag) {
-    multi_heap_info_t info;
-    heap_caps_get_info(&info, MALLOC_CAP_DEFAULT);
-
-    Serial.printf(
-        "[HEAP] %s\n"
-        "  Total free: %u bytes\n"
-        "  Largest free block: %u bytes\n"
-        "  Total allocated: %u bytes\n"
-        "  Minimum free ever: %u bytes\n"
-        "-----------------------------\n",
-        tag,
-        info.total_free_bytes,
-        info.largest_free_block,
-        info.total_allocated_bytes,
-        info.minimum_free_bytes
-    );
-}
-
 // Leer el propio sensor
 void storeOwnReading() {
     int readings[5];
@@ -236,8 +216,6 @@ void processIncomingPackets() {
 void loop() {
   time_t nowEpoch = time(nullptr);
 
-  printHeap("Start of loop");
-
   // LÓGICA DE PRIMER CICLO/SIN HORA
   if (nextWindowStartEpoch == 0) {
     Serial.println("Primer ciclo o sin hora. Conectando WiFi para sincronización...");
@@ -260,8 +238,7 @@ void loop() {
     goToDeepSleep(nextWindowStartEpoch);
   }
 
-  printHeap("After initial checks");
-  // INICIO DE VENTANA DE RECOLECCIÓN (ESP-NOW)
+    // INICIO DE VENTANA DE RECOLECCIÓN (ESP-NOW)
   Serial.printf("Esperando al inicio exacto de la ventana... ahora=%ld objetivo=%ld\n",
                 nowEpoch, nextWindowStartEpoch);
   while (time(nullptr) < nextWindowStartEpoch) {
@@ -274,7 +251,6 @@ void loop() {
   broadcastTimestamp();
   storeOwnReading();
 
-  printHeap("After storing own reading");
   unsigned long start = millis();
   while (millis() - start < windowDurationMs) { // windowDurationMs = 50000
     processIncomingPackets();
@@ -287,7 +263,6 @@ void loop() {
   esp_now_register_recv_cb(NULL);
   esp_now_deinit();
 
-  //printHeap("After ESP-NOW deinit");
   // PUBLICACIÓN (WIFI/MQTT)
   Serial.println("Conectando WiFi/MQTT para publicación...");
   bool wifiOk = wifiBootstrap.begin(info.ssid.c_str(), info.wifiPassword.c_str(), 15000);
@@ -318,6 +293,5 @@ void loop() {
   Serial.printf("Siguiente ventana programada: %s",
                 asctime(localtime(&nextWindowStartEpoch)));
 
-  //printHeap("End of loop");
   goToDeepSleep(nextWindowStartEpoch);
 }
