@@ -8,6 +8,9 @@
 #include "load_info.h"
 #include "wifi_bootstrap.h"
 #include "mqtt_client_manager.h" 
+#define SENSOR_PWR 25   // Alimentación del sensor
+#define SENSOR_ADC 34   // Entrada analógica (ADC)
+#define SENSOR_STABILIZE_MS 60
 
 // ESTADO PERSISTENTE
 RTC_DATA_ATTR time_t nextWindowStartEpoch = 0;
@@ -73,9 +76,12 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv, const uint8_t *da
 
 // Leer el propio sensor
 void storeOwnReading() {
+    digitalWrite(SENSOR_PWR, HIGH);
+    delay(SENSOR_STABILIZE_MS);
+
     int readings[5];
     for (int i = 0; i < 5; i++) {
-        readings[i] = analogRead(34);
+        readings[i] = analogRead(SENSOR_ADC);
         delay(5);  
     }
     std::sort(readings, readings + 5);
@@ -89,6 +95,7 @@ void storeOwnReading() {
         hum = constrain(hum, 0, 100);
     }
     addReading(nodeId, hum, raw);
+    digitalWrite(SENSOR_PWR, LOW);
 }
 
 
@@ -147,6 +154,10 @@ void goToDeepSleep(time_t nextWindowStart) {
 void setup() {
   Serial.begin(115200);
   delay(200);
+
+  pinMode(SENSOR_PWR, OUTPUT);
+  digitalWrite(SENSOR_PWR, LOW);
+  analogSetPinAttenuation(SENSOR_ADC, ADC_11db);
 
   Serial.printf("Wakeup cause: %d\n", (int)esp_sleep_get_wakeup_cause());
 

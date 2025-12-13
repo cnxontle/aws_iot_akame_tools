@@ -5,10 +5,11 @@
 #include <time.h>
 #include "esp_sleep.h"
 #define ESPNOW_CHANNEL 1
+#define SENSOR_PWR 25   // Alimentación del sensor
+#define SENSOR_ADC 34   // Entrada analógica (ADC)
+#define SENSOR_STABILIZE_MS 60
 
-RTC_DATA_ATTR time_t lastTimestamp = 0;
-
-// --------------------- CONFIG ------------------------
+// Configuración
 const int nodeId = 2;                // <- cambia por nodo
 const unsigned long slotDurationMs = 1000;
 const int numNodes = 50;             // cantidad de nodos activos en la red
@@ -24,6 +25,9 @@ static bool firstTs = false;
 bool timestampForwarded = false;
 bool forwardedNode[maxNodes + 1];  
 
+// Último timestamp recibido
+RTC_DATA_ATTR time_t lastTimestamp = 0; 
+
 // Paquetes recibidos fuera de ISR
 struct RawPkt {
   uint8_t data[128];
@@ -35,15 +39,6 @@ QueueHandle_t espNowQueue;
 void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv,
                             const uint8_t *data, int len)
 {
-  StaticJsonDocument<128> doc;
-  DeserializationError err = deserializeJson(doc, data, len);
-
-  if (!err && doc.containsKey("timestamp") && !firstTs) {
-    receivedTimestamp = (time_t)doc["timestamp"];
-    timestampReceived = true;
-    firstTs = true;
-}
-
   // Encolamos SIEMPRE el paquete para retransmitir
   RawPkt pkt;
   if (len > 128) len = 128;
@@ -57,9 +52,12 @@ void IRAM_ATTR onEspNowRecv(const esp_now_recv_info *infoRecv,
 
 // sensor
 void readHumidity(float &hum, int &raw) {
-    int readings[5];
+  digitalWrite(SENSOR_PWR, HIGH);
+  delay(SENSOR_STABILIZE_MS);
+
+  int readings[5];
     for (int i = 0; i < 5; i++) {
-        readings[i] = analogRead(34);
+        readings[i] = analogRead(SENSOR_ADC);
         delay(5);
     }
     // Ordenamos parcialmente para obtener la mediana
@@ -69,10 +67,12 @@ void readHumidity(float &hum, int &raw) {
     float denominator = rawdry - rawwet;
     if (denominator == 0) {
         hum = 0;
+        digitalWrite(SENSOR_PWR, LOW);
         return;
     }
     hum = (rawdry - raw) * 100.0 / denominator;
     hum = constrain(hum, 0, 100);
+    digitalWrite(SENSOR_PWR, LOW);
 }
 
 // send reading
@@ -99,13 +99,23 @@ void rebroadcastIncoming() {
 
         // TIMESTAMP
         if (parsed && doc.containsKey("timestamp")) {
-            if (!timestampForwarded) {
-                timestampForwarded = true;
-                uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
-                esp_now_send(bcast, pkt.data, pkt.len);
-            }
-            continue; 
-        }
+          time_t ts = (time_t)doc["timestamp"];
+
+          // Primera vez que recibimos timestamp
+          if (!firstTs) {
+              receivedTimestamp = ts;
+              timestampReceived = true;
+              firstTs = true;
+          }
+
+          // Retransmitir timestamp una sola vez
+          if (!timestampForwarded) {
+              timestampForwarded = true;
+              uint8_t bcast[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+              esp_now_send(bcast, pkt.data, pkt.len);
+          }
+          continue;
+      }
 
         // MENSAJE DE NODO
         if (parsed && doc.containsKey("nodeId")) {
@@ -131,6 +141,10 @@ void rebroadcastIncoming() {
 void setup() {
   Serial.begin(115200);
   delay(200);
+
+  pinMode(SENSOR_PWR, OUTPUT);
+  digitalWrite(SENSOR_PWR, LOW);
+  analogSetPinAttenuation(SENSOR_ADC, ADC_11db);
 
   memset(forwardedNode, 0, sizeof(forwardedNode));
   WiFi.mode(WIFI_STA);
