@@ -50,7 +50,7 @@ bool MqttClientManager::publishReadings(const std::vector<Reading> &readings) {
 
     DynamicJsonDocument doc(8192);
     doc["userId"] = info->userId;
-    doc["locationId"] = info->thingName;
+    doc["meshId"] = info->thingName;
     doc["timestamp"] = time(nullptr);
 
     JsonArray arr = doc.createNestedArray("readings");
