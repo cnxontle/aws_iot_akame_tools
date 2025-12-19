@@ -10,7 +10,7 @@
 #define SENSOR_STABILIZE_MS 60
 
 // Configuración
-const int nodeId = 50;                // <- cambia por nodo
+const int nodeId = 2;                // <- cambia por nodo
 const unsigned long slotDurationMs = 1000;
 const int numNodes = 50;             // cantidad de nodos activos en la red
 const int maxNodes = 255;            // capacidad máxima teórica del mesh
