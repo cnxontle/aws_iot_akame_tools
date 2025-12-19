@@ -10,7 +10,7 @@
 #define SENSOR_STABILIZE_MS 60
 
 // Configuración
-const int nodeId = 2;                // <- cambia por nodo
+const int nodeId = 50;                // <- cambia por nodo
 const unsigned long slotDurationMs = 1000;
 const int numNodes = 50;             // cantidad de nodos activos en la red
 const int maxNodes = 255;            // capacidad máxima teórica del mesh
@@ -24,6 +24,14 @@ volatile time_t receivedTimestamp = 0;
 static bool firstTs = false;
 bool timestampForwarded = false;
 bool forwardedNode[maxNodes + 1];  
+
+// Espera máxima de timestamp
+const unsigned long TS_MAX_WAIT_MS =
+  (70UL * 60UL * 1000UL);   // 1 hora 10 minutos
+
+// Sueño largo si no hay coordinador
+const uint32_t NO_TS_SLEEP_SEC =
+  (24UL * 60UL * 60UL);     // 1 día
 
 // Último timestamp recibido
 RTC_DATA_ATTR time_t lastTimestamp = 0; 
@@ -172,9 +180,36 @@ void setup() {
 void loop() {
 
   // 1. Esperar hasta recibir timestamp
-  while (!timestampReceived) {
+  unsigned long tsWaitStart = millis();
+
+  while (!timestampReceived &&
+        (millis() - tsWaitStart < TS_MAX_WAIT_MS)) {
     rebroadcastIncoming();
     delay(10);
+  }
+
+  // Si no recibimos timestamp, dormir largo
+  if (!timestampReceived) {
+    Serial.println(
+      "No se recibió timestamp en 1h10m. "
+      "Asumiendo coordinador caído. "
+      "Durmiendo 24h..."
+    );
+
+    esp_now_deinit();
+    WiFi.mode(WIFI_OFF);
+
+    esp_sleep_enable_timer_wakeup(
+      (uint64_t)NO_TS_SLEEP_SEC * 1000000ULL
+    );
+
+    Serial.flush();
+
+    firstTs = false;
+    timestampForwarded = false;
+    memset(forwardedNode, 0, sizeof(forwardedNode));
+    xQueueReset(espNowQueue);
+    esp_deep_sleep_start();
   }
 
   timestampReceived = false;
@@ -228,5 +263,6 @@ void loop() {
   firstTs = false;
   timestampForwarded = false;
   memset(forwardedNode, 0, sizeof(forwardedNode));
+  xQueueReset(espNowQueue);
   esp_deep_sleep_start();
 }
