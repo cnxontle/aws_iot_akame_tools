@@ -7,6 +7,8 @@ from tkinter import simpledialog, messagebox
 AWS_REGION = "us-east-2"
 SEARCH_NAME = "DeviceFactoryLambda"
 LAMBDA_NAME = None
+ACTIVATION_LAMBDA_SEARCH = "ActivationCodeAdminLambda"
+ACTIVATION_LAMBDA_NAME = None
 
 # IoT endpoint
 iot_client = boto3.client("iot", region_name=AWS_REGION)
@@ -20,14 +22,24 @@ paginator = lambda_client.get_paginator("list_functions")
 
 for page in paginator.paginate():
     for fn in page["Functions"]:
-        if SEARCH_NAME in fn["FunctionName"]:
-            LAMBDA_NAME = fn["FunctionName"]
-            break
+        name = fn["FunctionName"]
+
+        if SEARCH_NAME in name:
+            LAMBDA_NAME = name
+
+        if ACTIVATION_LAMBDA_SEARCH in name:
+            ACTIVATION_LAMBDA_NAME = name
+
+    if LAMBDA_NAME and ACTIVATION_LAMBDA_NAME:
+        break
 
 if not LAMBDA_NAME:
     messagebox.showerror("Error", "DeviceFactoryLambda no encontrada")
     exit(1)
 
+if not ACTIVATION_LAMBDA_NAME:
+    messagebox.showerror("Error", "ActivationCodeAdminLambda no encontrada")
+    exit(1)
 
 # ======================
 # UI
@@ -84,6 +96,22 @@ def create_device():
     return json.loads(response["Payload"].read())
 
 
+def generate_activation_code(user_id):
+    payload = {
+        "userId": user_id
+    }
+    response = lambda_client.invoke(
+        FunctionName=ACTIVATION_LAMBDA_NAME,
+        InvocationType="RequestResponse",
+        Payload=json.dumps(payload),
+    )
+    result = json.loads(response["Payload"].read())
+
+    if result.get("status") != "ok":
+        raise Exception(result.get("message", "Error generando activation code"))
+
+    return result
+
 # ======================
 # Save files
 # ======================
@@ -114,6 +142,16 @@ def save_files(base_dir, thing_name, data):
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=4)
 
+def append_activation_code_to_file(gw_path, user_id, activation_code, expires_at):
+    path = os.path.join(gw_path, "activation_code.txt")
+
+    line = (
+        f"userId={user_id} | "
+        f"code={activation_code} | "
+        f"expiresAt={expires_at}\n"
+    )
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
 
 # ======================
 # Main
@@ -131,7 +169,20 @@ result = create_device()
 
 if result.get("status") == "ok":
     thing_name = result["thingName"]
+    gw_path = os.path.join(os.getcwd(), "gateways", thing_name)
     save_files(os.getcwd(), thing_name, result)
+
+    if result.get("isNewUser"):
+        try:
+            activation_data = generate_activation_code(dialog.user_id)
+            append_activation_code_to_file(
+                gw_path,
+                dialog.user_id,
+                activation_data["activationCode"],
+                activation_data["expiresAt"]
+            )
+        except Exception as e:
+            messagebox.showwarning("Advertencia", f"No se pudo generar el código de activación: {e}")   
 
     messagebox.showinfo(
         "Gateway creado",
