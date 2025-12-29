@@ -5,26 +5,33 @@ import tkinter as tk
 from tkinter import simpledialog, messagebox
 
 AWS_REGION = "us-east-2"
-SEARCH_NAME = "DeviceFactoryLambda"
-LAMBDA_NAME = None
+
+DEVICE_FACTORY_SEARCH = "DeviceFactoryLambda"
 ACTIVATION_LAMBDA_SEARCH = "ActivationCodeAdminLambda"
+
+LAMBDA_NAME = None
 ACTIVATION_LAMBDA_NAME = None
 
-# IoT endpoint
+# ======================
+# AWS clients
+# ======================
 iot_client = boto3.client("iot", region_name=AWS_REGION)
+lambda_client = boto3.client("lambda", region_name=AWS_REGION)
+
 AWS_IOT_ENDPOINT = iot_client.describe_endpoint(
     endpointType="iot:Data-ATS"
 )["endpointAddress"]
 
-# Buscar Lambda
-lambda_client = boto3.client("lambda", region_name=AWS_REGION)
+# ======================
+# Buscar Lambdas
+# ======================
 paginator = lambda_client.get_paginator("list_functions")
 
 for page in paginator.paginate():
     for fn in page["Functions"]:
         name = fn["FunctionName"]
 
-        if SEARCH_NAME in name:
+        if DEVICE_FACTORY_SEARCH in name:
             LAMBDA_NAME = name
 
         if ACTIVATION_LAMBDA_SEARCH in name:
@@ -46,13 +53,18 @@ if not ACTIVATION_LAMBDA_NAME:
 # ======================
 class GatewayDialog(simpledialog.Dialog):
     def body(self, master):
-        master.master.geometry("270x170")
+        master.master.geometry("280x180")
 
-        tk.Label(master, text="User ID:").grid(row=0, column=0, sticky="e")
-        tk.Label(master, text="Display Name:").grid(row=1, column=0, sticky="e")
-        tk.Label(master, text="SSID:").grid(row=2, column=0, sticky="e")
-        tk.Label(master, text="WiFi Password:").grid(row=3, column=0, sticky="e")
-        tk.Label(master, text="Plan (días):").grid(row=4, column=0, sticky="e")
+        labels = [
+            "User ID:",
+            "Display Name:",
+            "SSID:",
+            "WiFi Password:",
+            "Plan (días):",
+        ]
+
+        for i, text in enumerate(labels):
+            tk.Label(master, text=text).grid(row=i, column=0, sticky="e")
 
         self.user_entry = tk.Entry(master)
         self.display_entry = tk.Entry(master)
@@ -73,12 +85,13 @@ class GatewayDialog(simpledialog.Dialog):
         self.display_name = self.display_entry.get().strip()
         self.ssid = self.ssid_entry.get().strip()
         self.wifi_password = self.pass_entry.get().strip()
+
         raw = self.plan_entry.get().strip()
         self.plan_days = int(raw) if raw else None
 
 
 # ======================
-# Lambda call
+# Lambda calls
 # ======================
 def create_device():
     payload = {
@@ -96,15 +109,18 @@ def create_device():
     return json.loads(response["Payload"].read())
 
 
-def generate_activation_code(user_id):
-    payload = {
-        "userId": user_id
-    }
+def generate_activation_code(user_id, plan_days=None):
+    payload = {"userId": user_id}
+
+    if plan_days:
+        payload["ttlSeconds"] = plan_days * 24 * 3600
+
     response = lambda_client.invoke(
         FunctionName=ACTIVATION_LAMBDA_NAME,
         InvocationType="RequestResponse",
         Payload=json.dumps(payload),
     )
+
     result = json.loads(response["Payload"].read())
 
     if result.get("status") != "ok":
@@ -112,8 +128,9 @@ def generate_activation_code(user_id):
 
     return result
 
+
 # ======================
-# Save files
+# Files
 # ======================
 def save_files(base_dir, thing_name, data):
     gw_path = os.path.join(base_dir, "gateways", thing_name)
@@ -142,16 +159,19 @@ def save_files(base_dir, thing_name, data):
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=4)
 
-def append_activation_code_to_file(gw_path, user_id, activation_code, expires_at):
+
+def save_activation_code(gw_path, activation):
     path = os.path.join(gw_path, "activation_code.txt")
 
     line = (
-        f"userId={user_id} | "
-        f"code={activation_code} | "
-        f"expiresAt={expires_at}\n"
+        f"userId={activation['userId']} | "
+        f"code={activation['activationCode']} | "
+        f"expiresAt={activation['expiresAt']}\n"
     )
+
     with open(path, "a", encoding="utf-8") as f:
         f.write(line)
+
 
 # ======================
 # Main
@@ -167,26 +187,32 @@ if not dialog.user_id:
 
 result = create_device()
 
-if result.get("status") == "ok":
-    thing_name = result["thingName"]
-    gw_path = os.path.join(os.getcwd(), "gateways", thing_name)
-    save_files(os.getcwd(), thing_name, result)
-
-    if result.get("isNewUser"):
-        try:
-            activation_data = generate_activation_code(dialog.user_id)
-            append_activation_code_to_file(
-                gw_path,
-                dialog.user_id,
-                activation_data["activationCode"],
-                activation_data["expiresAt"]
-            )
-        except Exception as e:
-            messagebox.showwarning("Advertencia", f"No se pudo generar el código de activación: {e}")   
-
-    messagebox.showinfo(
-        "Gateway creado",
-        f"Display Name: {result['displayName']}\nThingName: {thing_name}"
-    )
-else:
+if result.get("status") != "ok":
     messagebox.showerror("Error", result.get("message"))
+    exit(1)
+
+thing_name = result["thingName"]
+base_dir = os.getcwd()
+gw_path = os.path.join(base_dir, "gateways", thing_name)
+
+save_files(base_dir, thing_name, result)
+
+# Solo generar activation code si es usuario nuevo
+if result.get("isNewUser"):
+    try:
+        activation = generate_activation_code(
+            dialog.user_id,
+            dialog.plan_days,
+        )
+        save_activation_code(gw_path, activation)
+    except Exception as e:
+        messagebox.showwarning(
+            "Advertencia",
+            f"No se pudo generar el código de activación:\n{e}",
+        )
+
+messagebox.showinfo(
+    "Gateway creado",
+    f"Display Name: {result['displayName']}\n"
+    f"ThingName: {thing_name}",
+)
