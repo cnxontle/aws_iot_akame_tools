@@ -9,9 +9,8 @@ AWS_REGION = "us-east-2"
 DEVICE_FACTORY_SEARCH = "DeviceFactoryLambda"
 LAMBDA_NAME = None
 
-# ======================
+
 # AWS clients
-# ======================
 iot_client = boto3.client("iot", region_name=AWS_REGION)
 lambda_client = boto3.client("lambda", region_name=AWS_REGION)
 
@@ -19,9 +18,8 @@ AWS_IOT_ENDPOINT = iot_client.describe_endpoint(
     endpointType="iot:Data-ATS"
 )["endpointAddress"]
 
-# ======================
+
 # Buscar DeviceFactoryLambda
-# ======================
 paginator = lambda_client.get_paginator("list_functions")
 
 for page in paginator.paginate():
@@ -37,12 +35,11 @@ if not LAMBDA_NAME:
     messagebox.showerror("Error", "DeviceFactoryLambda no encontrada")
     exit(1)
 
-# ======================
+
 # UI para ingresar datos
-# ======================
 class GatewayDialog(simpledialog.Dialog):
     def body(self, master):
-        master.master.geometry("300x200")
+        master.master.geometry("250x150")
 
         labels = [
             "SSID:",
@@ -70,27 +67,23 @@ class GatewayDialog(simpledialog.Dialog):
         raw = self.plan_entry.get().strip()
         self.plan_days = int(raw) if raw else None
 
-# ======================
+
 # Lambda call
-# ======================
 def create_device():
     payload = {}
 
     # El plan es opcional (la lambda usa DEFAULT_EXPIRATION_SECONDS)
     if dialog.plan_days:
         payload["planDays"] = dialog.plan_days
-
     response = lambda_client.invoke(
         FunctionName=LAMBDA_NAME,
         InvocationType="RequestResponse",
         Payload=json.dumps(payload),
     )
-
     return json.loads(response["Payload"].read())
 
-# ======================
+
 # Archivos y metadata
-# ======================
 def save_files(base_dir, thing_name, data):
     gw_path = os.path.join(base_dir, "gateways", thing_name)
     esp_path = os.path.join(base_dir, "sketches", "sensor_humidity_wifi", "data")
@@ -104,6 +97,7 @@ def save_files(base_dir, thing_name, data):
         "awsIotEndpoint": AWS_IOT_ENDPOINT,
         "SSID": dialog.ssid,
         "WiFiPassword": dialog.wifi_password,
+        "activationCode": data["activationCode"],
     }
 
     for path in (gw_path, esp_path):
@@ -121,15 +115,8 @@ def save_files(base_dir, thing_name, data):
 
     return gw_path
 
-def save_activation_code(gw_path, activation_code):
-    path = os.path.join(gw_path, "activation_code.txt")
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(f"code={activation_code}\n")
-
-# ======================
 # Main
-# ======================
 root = tk.Tk()
 root.withdraw()
 
@@ -150,8 +137,6 @@ base_dir = os.getcwd()
 # Guardar certificados y metadata
 gw_path = save_files(base_dir, thing_name, result)
 
-# Guardar activation code
-save_activation_code(gw_path, activation_code)
 
 messagebox.showinfo(
     "Gateway creado",

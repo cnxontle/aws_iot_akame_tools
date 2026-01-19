@@ -49,7 +49,7 @@ bool MqttClientManager::publishReadings(const std::vector<Reading> &readings) {
     }
 
     DynamicJsonDocument doc(8192);
-    doc["userId"] = info->userId;
+    //doc["userId"] = info->userId;
     doc["meshId"] = info->thingName;
     doc["timestamp"] = time(nullptr);
 
